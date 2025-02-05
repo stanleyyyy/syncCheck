@@ -1,0 +1,15 @@
+set(syncCheck_HEADERS
+	${syncCheck_PUBLIC_HEADERS}
+)
+
+set(syncCheck_SOURCES
+	SyncCheck.cpp
+	kissfft/kiss_fft.c
+	kissfft/kiss_fftr.c
+)
+
+include_directories(${CMAKE_CURRENT_BINARY_DIR})
+include_directories(kissfft)
+
+add_library(nsdk_syncCheck SHARED ${syncCheck_SOURCES} ${syncCheck_HEADERS})
+add_executable(nsdk_syncCheck_test main.cpp)
