@@ -430,15 +430,22 @@ std::vector<float> FFTSyncCheck::generateTestSignal(float duration, std::vector<
 	std::vector<float> mixed_signal(num_samples, 0.0f);
 	std::vector<std::vector<float>> band_signals(NUM_BANDS, std::vector<float>(num_samples, 0.0f));
 
-	// Generate reference signal with a very small correlation (White noise)
+	// Generate reference signal with a very small correlation (White noise) and periodic pulses
 	{
 		std::random_device rd;
 		std::mt19937 gen(rd());
 		std::uniform_real_distribution<float> dist(-0.5f, 0.5f);
 
-		// Generate white noise reference signal
+		// Generate white noise reference signal with periodic pulses
 		for (int i = 0; i < num_samples; i++) {
-			reference_signal[i] = dist(gen);
+			reference_signal[i] = dist(gen) * 0.3f; // Reduce noise amplitude to make pulses more visible
+
+			// Add a pulse every second (width: 10ms, amplitude: 1.0)
+			int sample_in_second = i % m_sampleRate;
+			if (sample_in_second < static_cast<int>(0.01f * m_sampleRate)) { // 10ms pulse width
+				float pulse = 1.0f * (1.0f - static_cast<float>(sample_in_second) / (0.01f * m_sampleRate)); // Linear fade-out
+				reference_signal[i] += pulse;
+			}
 		}
 	}
 
