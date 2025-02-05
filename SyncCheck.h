@@ -10,10 +10,18 @@
 #include <stdexcept>
 #include <cmath>
 #include <cstdlib> // for free
+#include <memory>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
+
+// Forward declare the FFT configuration type
+struct kiss_fftr_state;
+typedef struct kiss_fftr_state* kiss_fftr_cfg;
+
+// Define the deleter type
+using kiss_fftr_deleter = void(*)(void*);
 
 /**
  * @brief FFTSyncCheck performs FFT‐based synchronization checks across multiple frequency bands.
@@ -30,6 +38,11 @@ public:
 	 * @brief Block size used for analysis and test signal generation.
 	 */
 	static constexpr int BLOCK_SIZE = 4096;
+
+	/**
+	 * @brief Interpolation factor for delay calculations.
+	 */
+	static constexpr int INTERP_FACTOR = 4;
 
 	/**
 	 * @brief Constructs the FFTSyncCheck object.
@@ -51,7 +64,7 @@ public:
 	 * @param output Kiss FFT complex output array in which the extracted band will be stored.
 	 * @param band_idx Index of the band to extract.
 	 */
-	void extractBand(const kiss_fft_cpx *input, kiss_fft_cpx *output, int band_idx);
+	void extractBand(const std::vector<kiss_fft_cpx>& input, std::vector<kiss_fft_cpx>& output, int band_idx);
 
 	/**
 	 * @brief Calculate the cross‐correlation delay between two frequency bands.
@@ -71,7 +84,7 @@ public:
 	 * @param band2 Index of the second band
 	 * @return Calculated delay in seconds
 	 */
-	float calculateBandDelayFFT(const kiss_fft_cpx* fft_data, int band1, int band2);
+	float calculateBandDelayFFT(const std::vector<kiss_fft_cpx>& fft_data, int band1, int band2);
 
 	/**
 	 * @brief Print comprehensive delay statistics for each frequency band.
@@ -101,7 +114,7 @@ public:
 	 * @param verbose If true, prints progress and quality metrics.
 	 * @return Generated mixed test signal.
 	 */
-	std::vector<float> generateTestSignal(float duration, const std::vector<float> &delays_ms, bool verbose = true);
+	std::vector<float> generateTestSignal(float duration, std::vector<float> &delays_ms, bool verbose = true);
 
 	/**
 	 * @brief Sampling rate.
@@ -181,36 +194,36 @@ private:
 	/**
 	 * @brief Kiss FFT configuration for forward (real-to-complex) analysis.
 	 */
-	kiss_fftr_cfg m_analysisForwardCfg;
+	std::unique_ptr<kiss_fftr_state, kiss_fftr_deleter> m_analysisForwardCfg;
 
 	/**
 	 * @brief Kiss FFT configuration for inverse (complex-to-real) analysis.
 	 */
-	kiss_fftr_cfg m_analysisInverseCfg;
+	std::unique_ptr<kiss_fftr_state, kiss_fftr_deleter> m_analysisInverseCfg;
 
 	/**
 	 * @brief Buffer for time‐domain data used in analysis.
 	 */
-	float *m_analysisTimeData;
+	std::vector<float> m_analysisTimeData;
 
 	/**
 	 * @brief Buffer for frequency‐domain data used in analysis.
 	 */
-	kiss_fft_cpx *m_analysisFreqData;
+	std::vector<kiss_fft_cpx> m_analysisFreqData;
 
 	/**
 	 * @brief Buffer for storing frequency‐domain cross‐correlation data.
 	 */
-	kiss_fft_cpx *m_correlationData;
+	std::vector<kiss_fft_cpx> m_correlationData;
 
 	/**
 	 * @brief Padded FFT configurations for delay calculations
 	 */
-	kiss_fftr_cfg m_paddedForwardCfg;
-	kiss_fftr_cfg m_paddedInverseCfg;
+	std::unique_ptr<kiss_fftr_state, kiss_fftr_deleter> m_paddedForwardCfg;
+	std::unique_ptr<kiss_fftr_state, kiss_fftr_deleter> m_paddedInverseCfg;
 	std::vector<float> m_paddedTimeData;
-	std::vector<kiss_fft_cpx> m_paddedFreqData;
 	std::vector<kiss_fft_cpx> m_paddedCorrData;
+	std::vector<kiss_fft_cpx> m_paddedFreqData;
 
 	/**
 	 * @brief Structure representing signal quality metrics.
@@ -276,39 +289,39 @@ private:
 		/**
 		 * @brief Process a block of input samples and produce an output block.
 		 *
-		 * @param input Pointer to input samples.
-		 * @param output Pointer to output samples.
+		 * @param input Reference to input samples.
+		 * @param output Reference to output samples.
 		 */
-		void processBlock(const float *input, float *output);
+		void processBlock(const std::vector<float>& input, std::vector<float>& output);
 
 		/**
 		 * @brief Process a block with pre-computed FFT data
 		 * @param fft_data Pre-computed FFT data
 		 * @param output Output buffer of size m_blockSize
 		 */
-		void processBlockFFT(const kiss_fft_cpx* fft_data, float* output);
+		void processBlockFFT(const std::vector<kiss_fft_cpx>& fft_data, std::vector<float>& output);
 
 		/**
 		 * @brief Process a block of samples with frequency shifting
-		 * @param input Input buffer of size m_blockSize
-		 * @param output Output buffer of size m_blockSize
+		 * @param input Reference to input buffer of size m_blockSize
+		 * @param output Reference to output buffer of size m_blockSize
 		 */
-		void processBlockWithShift(const float* input, float* output);
+		void processBlockWithShift(const std::vector<float>& input, std::vector<float>& output);
 
 		/**
 		 * @brief Process a block with frequency shifting using pre-computed FFT data
 		 * @param fft_data Pre-computed FFT data
-		 * @param output Output buffer of size m_blockSize
+		 * @param output Reference to output buffer of size m_blockSize
 		 */
-		void processBlockWithShiftFFT(const kiss_fft_cpx* fft_data, float* output);
+		void processBlockWithShiftFFT(const std::vector<kiss_fft_cpx>& fft_data, std::vector<float>& output);
 
 		/**
 		 * @brief Apply window function to input data
-		 * @param input Input buffer
-		 * @param output Output buffer
+		 * @param input Reference to input buffer
+		 * @param output Reference to output buffer
 		 * @param size Buffer size
 		 */
-		void applyWindow(const float* input, float* output, int size) const;
+		void applyWindow(const std::vector<float>& input, std::vector<float>& output, int size) const;
 
 		/**
 		 * @brief Get the band isolation metric in dB.
@@ -337,22 +350,27 @@ private:
 		/**
 		 * @brief Kiss FFT configuration for forward (real-to-complex) transform.
 		 */
-		kiss_fftr_cfg m_forwardCfg;
+		std::unique_ptr<kiss_fftr_state, kiss_fftr_deleter> m_forwardCfg;
 
 		/**
 		 * @brief Kiss FFT configuration for inverse (complex-to-real) transform.
 		 */
-		kiss_fftr_cfg m_inverseCfg;
+		std::unique_ptr<kiss_fftr_state, kiss_fftr_deleter> m_inverseCfg;
 
 		/**
 		 * @brief Buffer for time‐domain data.
 		 */
-		float *m_timeData;
+		std::vector<float> m_timeData;
 
 		/**
 		 * @brief Buffer for frequency‐domain data.
 		 */
-		kiss_fft_cpx *m_freqData;
+		std::vector<kiss_fft_cpx> m_freqData;
+
+		/**
+		 * @brief Working buffer for band-filtered data.
+		 */
+		std::vector<kiss_fft_cpx> m_workingFreqData;
 
 		/**
 		 * @brief Reference to the associated frequency band.

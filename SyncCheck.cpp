@@ -2,10 +2,11 @@
 #include <sndfile.h>
 
 FFTSyncCheck::BandProcessor::BandProcessor(int block_size, int overlap_size, const Band &band, int sample_rate)
-	: m_forwardCfg(nullptr)
-	, m_inverseCfg(nullptr)
-	, m_timeData(nullptr)
-	, m_freqData(nullptr)
+	: m_forwardCfg(kiss_fftr_alloc(block_size, 0, nullptr, nullptr), free)
+	, m_inverseCfg(kiss_fftr_alloc(block_size, 1, nullptr, nullptr), free)
+	, m_timeData(block_size)
+	, m_freqData(block_size / 2 + 1)
+	, m_workingFreqData(block_size / 2 + 1)
 	, m_band(band)
 	, m_overlapBuffer(overlap_size, 0.0f)
 	, m_blockSize(block_size)
@@ -15,8 +16,6 @@ FFTSyncCheck::BandProcessor::BandProcessor(int block_size, int overlap_size, con
 	, m_outBandPower(0.0)
 	, m_sampleRate(sample_rate)
 {
-	allocateResources();
-
 	// Square root of Hann window - perfect for 50% overlap when applied twice
 	for (int i = 0; i < m_blockSize; i++) {
 		float hann = 0.5f * (1.0f - cosf(2.0f * M_PI * i / (m_blockSize - 1)));
@@ -25,10 +24,11 @@ FFTSyncCheck::BandProcessor::BandProcessor(int block_size, int overlap_size, con
 }
 
 FFTSyncCheck::BandProcessor::BandProcessor(const BandProcessor &other)
-	: m_forwardCfg(nullptr)
-	, m_inverseCfg(nullptr)
-	, m_timeData(nullptr)
-	, m_freqData(nullptr)
+	: m_forwardCfg(kiss_fftr_alloc(other.m_blockSize, 0, nullptr, nullptr), free)
+	, m_inverseCfg(kiss_fftr_alloc(other.m_blockSize, 1, nullptr, nullptr), free)
+	, m_timeData(other.m_timeData)
+	, m_freqData(other.m_freqData)
+	, m_workingFreqData(other.m_workingFreqData)
 	, m_band(other.m_band)
 	, m_overlapBuffer(other.m_overlapBuffer)
 	, m_blockSize(other.m_blockSize)
@@ -38,14 +38,14 @@ FFTSyncCheck::BandProcessor::BandProcessor(const BandProcessor &other)
 	, m_outBandPower(other.m_outBandPower)
 	, m_sampleRate(other.m_sampleRate)
 {
-	allocateResources();
 }
 
 FFTSyncCheck::BandProcessor::BandProcessor(BandProcessor &&other) noexcept
-	: m_forwardCfg(other.m_forwardCfg)
-	, m_inverseCfg(other.m_inverseCfg)
-	, m_timeData(other.m_timeData)
-	, m_freqData(other.m_freqData)
+	: m_forwardCfg(std::move(other.m_forwardCfg))
+	, m_inverseCfg(std::move(other.m_inverseCfg))
+	, m_timeData(std::move(other.m_timeData))
+	, m_freqData(std::move(other.m_freqData))
+	, m_workingFreqData(std::move(other.m_workingFreqData))
 	, m_band(other.m_band)
 	, m_overlapBuffer(std::move(other.m_overlapBuffer))
 	, m_blockSize(other.m_blockSize)
@@ -55,21 +55,18 @@ FFTSyncCheck::BandProcessor::BandProcessor(BandProcessor &&other) noexcept
 	, m_outBandPower(other.m_outBandPower)
 	, m_sampleRate(other.m_sampleRate)
 {
-	other.m_forwardCfg = nullptr;
-	other.m_inverseCfg = nullptr;
-	other.m_timeData = nullptr;
-	other.m_freqData = nullptr;
 }
 
-FFTSyncCheck::BandProcessor::~BandProcessor()
-{
-	freeResources();
-}
+FFTSyncCheck::BandProcessor::~BandProcessor() = default;
 
 FFTSyncCheck::BandProcessor &FFTSyncCheck::BandProcessor::operator=(const BandProcessor &other)
 {
 	if (this != &other) {
-		freeResources();
+		m_forwardCfg.reset(kiss_fftr_alloc(other.m_blockSize, 0, nullptr, nullptr));
+		m_inverseCfg.reset(kiss_fftr_alloc(other.m_blockSize, 1, nullptr, nullptr));
+		m_timeData = other.m_timeData;
+		m_freqData = other.m_freqData;
+		m_workingFreqData = other.m_workingFreqData;
 		m_band = other.m_band;
 		m_overlapBuffer = other.m_overlapBuffer;
 		m_blockSize = other.m_blockSize;
@@ -78,7 +75,6 @@ FFTSyncCheck::BandProcessor &FFTSyncCheck::BandProcessor::operator=(const BandPr
 		m_inBandPower = other.m_inBandPower;
 		m_outBandPower = other.m_outBandPower;
 		m_sampleRate = other.m_sampleRate;
-		allocateResources();
 	}
 	return *this;
 }
@@ -86,11 +82,11 @@ FFTSyncCheck::BandProcessor &FFTSyncCheck::BandProcessor::operator=(const BandPr
 FFTSyncCheck::BandProcessor &FFTSyncCheck::BandProcessor::operator=(BandProcessor &&other) noexcept
 {
 	if (this != &other) {
-		freeResources();
-		m_forwardCfg = other.m_forwardCfg;
-		m_inverseCfg = other.m_inverseCfg;
-		m_timeData = other.m_timeData;
-		m_freqData = other.m_freqData;
+		m_forwardCfg = std::move(other.m_forwardCfg);
+		m_inverseCfg = std::move(other.m_inverseCfg);
+		m_timeData = std::move(other.m_timeData);
+		m_freqData = std::move(other.m_freqData);
+		m_workingFreqData = std::move(other.m_workingFreqData);
 		m_band = other.m_band;
 		m_overlapBuffer = std::move(other.m_overlapBuffer);
 		m_blockSize = other.m_blockSize;
@@ -99,38 +95,34 @@ FFTSyncCheck::BandProcessor &FFTSyncCheck::BandProcessor::operator=(BandProcesso
 		m_inBandPower = other.m_inBandPower;
 		m_outBandPower = other.m_outBandPower;
 		m_sampleRate = other.m_sampleRate;
-		other.m_forwardCfg = nullptr;
-		other.m_inverseCfg = nullptr;
-		other.m_timeData = nullptr;
-		other.m_freqData = nullptr;
 	}
 	return *this;
 }
 
-void FFTSyncCheck::BandProcessor::processBlockFFT(const kiss_fft_cpx* fft_data, float* output)
+void FFTSyncCheck::BandProcessor::processBlockFFT(const std::vector<kiss_fft_cpx>& fft_data, std::vector<float>& output)
 {
 	// Copy input FFT data
-	std::memcpy(m_freqData, fft_data, sizeof(kiss_fft_cpx) * (m_blockSize / 2 + 1));
+	std::copy(fft_data.begin(), fft_data.begin() + m_blockSize / 2 + 1, m_workingFreqData.begin());
 
 	// Band-pass filter and measure power
 	m_inBandPower = 0.0f;
 	m_outBandPower = 0.0f;
 	for (int i = 0; i < m_blockSize / 2 + 1; i++) {
-		float real_val = m_freqData[i].r;
-		float imag_val = m_freqData[i].i;
+		float real_val = m_workingFreqData[i].r;
+		float imag_val = m_workingFreqData[i].i;
 		float power = real_val * real_val + imag_val * imag_val;
 		if (i >= m_band.m_startBin && i <= m_band.m_endBin) {
 			m_inBandPower += power;
 		}
 		else {
 			m_outBandPower += power;
-			m_freqData[i].r = 0.0f;
-			m_freqData[i].i = 0.0f;
+			m_workingFreqData[i].r = 0.0f;
+			m_workingFreqData[i].i = 0.0f;
 		}
 	}
 
 	// Execute inverse FFT
-	kiss_fftri(m_inverseCfg, m_freqData, m_timeData);
+	kiss_fftri(m_inverseCfg.get(), m_workingFreqData.data(), m_timeData.data());
 
 	// Apply scaling and window
 	for (int i = 0; i < m_blockSize; i++) {
@@ -153,14 +145,14 @@ void FFTSyncCheck::BandProcessor::processBlockFFT(const kiss_fft_cpx* fft_data, 
 	}
 }
 
-void FFTSyncCheck::BandProcessor::processBlockWithShiftFFT(const kiss_fft_cpx* fft_data, float* output)
+void FFTSyncCheck::BandProcessor::processBlockWithShiftFFT(const std::vector<kiss_fft_cpx>& fft_data, std::vector<float>& output)
 {
 	// Reset power measurements
 	m_inBandPower = 0.0f;
 	m_outBandPower = 0.0f;
 
 	// Zero out the destination buffer
-	std::memset(m_freqData, 0, sizeof(kiss_fft_cpx) * (m_blockSize / 2 + 1));
+	std::fill(m_workingFreqData.begin(), m_workingFreqData.end(), kiss_fft_cpx{0.0f, 0.0f});
 
 	// Calculate band width
 	int band_width = m_band.m_endBin - m_band.m_startBin + 1;
@@ -169,9 +161,9 @@ void FFTSyncCheck::BandProcessor::processBlockWithShiftFFT(const kiss_fft_cpx* f
 	for (int i = 0; i < band_width; i++) {
 		int target_bin = m_band.m_startBin + i;
 		if (target_bin < m_blockSize / 2 + 1) {
-			m_freqData[target_bin] = fft_data[i];
+			m_workingFreqData[target_bin] = fft_data[i];
 			float power = fft_data[i].r * fft_data[i].r + fft_data[i].i * fft_data[i].i;
-			m_inBandPower += power;
+				m_inBandPower += power;
 		}
 	}
 
@@ -179,12 +171,12 @@ void FFTSyncCheck::BandProcessor::processBlockWithShiftFFT(const kiss_fft_cpx* f
 	for (int i = 0; i < m_blockSize / 2 + 1; i++) {
 		if (i < m_band.m_startBin || i > m_band.m_endBin) {
 			float power = fft_data[i].r * fft_data[i].r + fft_data[i].i * fft_data[i].i;
-			m_outBandPower += power;
+				m_outBandPower += power;
 		}
 	}
 
 	// Execute inverse FFT
-	kiss_fftri(m_inverseCfg, m_freqData, m_timeData);
+	kiss_fftri(m_inverseCfg.get(), m_workingFreqData.data(), m_timeData.data());
 
 	// Apply scaling and window
 	for (int i = 0; i < m_blockSize; i++) {
@@ -207,7 +199,7 @@ void FFTSyncCheck::BandProcessor::processBlockWithShiftFFT(const kiss_fft_cpx* f
 	}
 }
 
-void FFTSyncCheck::BandProcessor::processBlock(const float *input, float *output)
+void FFTSyncCheck::BandProcessor::processBlock(const std::vector<float>& input, std::vector<float>& output)
 {
 	// Apply window and copy input to FFT buffer
 	for (int i = 0; i < m_blockSize; i++) {
@@ -215,13 +207,13 @@ void FFTSyncCheck::BandProcessor::processBlock(const float *input, float *output
 	}
 
 	// Execute forward FFT
-	kiss_fftr(m_forwardCfg, m_timeData, m_freqData);
+	kiss_fftr(m_forwardCfg.get(), m_timeData.data(), m_freqData.data());
 
 	// Process the FFT data
 	processBlockFFT(m_freqData, output);
 }
 
-void FFTSyncCheck::BandProcessor::processBlockWithShift(const float *input, float *output)
+void FFTSyncCheck::BandProcessor::processBlockWithShift(const std::vector<float>& input, std::vector<float>& output)
 {
 	// Apply window and copy input to FFT buffer
 	for (int i = 0; i < m_blockSize; i++) {
@@ -229,7 +221,7 @@ void FFTSyncCheck::BandProcessor::processBlockWithShift(const float *input, floa
 	}
 
 	// Execute forward FFT
-	kiss_fftr(m_forwardCfg, m_timeData, m_freqData);
+	kiss_fftr(m_forwardCfg.get(), m_timeData.data(), m_freqData.data());
 
 	// Process the FFT data with shift
 	processBlockWithShiftFFT(m_freqData, output);
@@ -240,23 +232,7 @@ float FFTSyncCheck::BandProcessor::getBandIsolation() const
 	return 10.0f * log10f(m_inBandPower / (m_outBandPower + 1e-10f));
 }
 
-void FFTSyncCheck::BandProcessor::allocateResources()
-{
-	m_timeData = new float[m_blockSize];
-	m_freqData = new kiss_fft_cpx[m_blockSize / 2 + 1];
-	m_forwardCfg = kiss_fftr_alloc(m_blockSize, 0, nullptr, nullptr);
-	m_inverseCfg = kiss_fftr_alloc(m_blockSize, 1, nullptr, nullptr);
-}
-
-void FFTSyncCheck::BandProcessor::freeResources()
-{
-	free(m_forwardCfg);
-	free(m_inverseCfg);
-	delete[] m_timeData;
-	delete[] m_freqData;
-}
-
-void FFTSyncCheck::BandProcessor::applyWindow(const float* input, float* output, int size) const
+void FFTSyncCheck::BandProcessor::applyWindow(const std::vector<float>& input, std::vector<float>& output, int size) const
 {
 	for (int i = 0; i < size; i++) {
 		output[i] = input[i] * m_window[i];
@@ -268,32 +244,17 @@ FFTSyncCheck::FFTSyncCheck(int fft_size, int sample_rate)
 	, m_fftSize(fft_size)
 	, m_bands(NUM_BANDS)
 	, m_delayStats(NUM_BANDS)
-	, m_analysisForwardCfg(nullptr)
-	, m_analysisInverseCfg(nullptr)
-	, m_analysisTimeData(nullptr)
-	, m_analysisFreqData(nullptr)
-	, m_correlationData(nullptr)
-	, m_paddedForwardCfg(nullptr)
-	, m_paddedInverseCfg(nullptr)
+	, m_analysisForwardCfg(kiss_fftr_alloc(fft_size, 0, nullptr, nullptr), free)
+	, m_analysisInverseCfg(kiss_fftr_alloc(fft_size, 1, nullptr, nullptr), free)
+	, m_analysisTimeData(fft_size)
+	, m_analysisFreqData(fft_size / 2 + 1)
+	, m_correlationData(fft_size / 2 + 1)
+	, m_paddedForwardCfg(kiss_fftr_alloc(fft_size * INTERP_FACTOR, 0, nullptr, nullptr), free)
+	, m_paddedInverseCfg(kiss_fftr_alloc(fft_size * INTERP_FACTOR, 1, nullptr, nullptr), free)
+	, m_paddedTimeData(fft_size * INTERP_FACTOR)
+	, m_paddedCorrData(fft_size * INTERP_FACTOR / 2 + 1)
+	, m_paddedFreqData(fft_size * INTERP_FACTOR / 2 + 1)
 {
-	// Allocate buffers for analysis.
-	m_analysisTimeData = new float[m_fftSize];
-	m_analysisFreqData = new kiss_fft_cpx[m_fftSize / 2 + 1];
-	m_correlationData = new kiss_fft_cpx[m_fftSize / 2 + 1];
-
-	// Create Kiss FFT configurations.
-	m_analysisForwardCfg = kiss_fftr_alloc(m_fftSize, 0, nullptr, nullptr);
-	m_analysisInverseCfg = kiss_fftr_alloc(m_fftSize, 1, nullptr, nullptr);
-
-	// Create padded FFT configurations for delay calculations
-	const int INTERP_FACTOR = 4;
-	const int padded_size = m_fftSize * INTERP_FACTOR;
-	m_paddedForwardCfg = kiss_fftr_alloc(padded_size, 0, nullptr, nullptr);
-	m_paddedInverseCfg = kiss_fftr_alloc(padded_size, 1, nullptr, nullptr);
-	m_paddedTimeData.resize(padded_size);
-	m_paddedFreqData.resize(padded_size / 2 + 1);
-	m_paddedCorrData.resize(padded_size / 2 + 1);
-
 	// Calculate band boundaries.
 	int bins_per_band = (m_fftSize / 2) / NUM_BANDS;
 	for (int i = 0; i < NUM_BANDS; i++) {
@@ -302,58 +263,57 @@ FFTSyncCheck::FFTSyncCheck(int fft_size, int sample_rate)
 	}
 }
 
-FFTSyncCheck::~FFTSyncCheck()
-{
-	free(m_analysisForwardCfg);
-	free(m_analysisInverseCfg);
-	free(m_paddedForwardCfg);
-	free(m_paddedInverseCfg);
-	delete[] m_analysisTimeData;
-	delete[] m_analysisFreqData;
-	delete[] m_correlationData;
-}
+FFTSyncCheck::~FFTSyncCheck() = default;
 
-void FFTSyncCheck::extractBand(const kiss_fft_cpx *input, kiss_fft_cpx *output, int band_idx)
+void FFTSyncCheck::extractBand(const std::vector<kiss_fft_cpx>& input, std::vector<kiss_fft_cpx>& output, int band_idx)
 {
-	std::memset(output, 0, sizeof(kiss_fft_cpx) * (m_fftSize / 2 + 1));
+	std::fill(output.begin(), output.end(), kiss_fft_cpx{0.0f, 0.0f});
 	if (band_idx >= 0 && band_idx < NUM_BANDS) {
 		int start = m_bands[band_idx].m_startBin;
 		int end = m_bands[band_idx].m_endBin;
 		for (int i = start; i <= end; i++) {
-			output[i].r = input[i].r;
-			output[i].i = input[i].i;
+			output[i] = input[i];
 		}
 	}
 }
 
-float FFTSyncCheck::calculateBandDelayFFT(const kiss_fft_cpx* fft_data, int band1, int band2)
+float FFTSyncCheck::calculateBandDelayFFT(const std::vector<kiss_fft_cpx>& fft_data, int band1, int band2)
 {
-	const int INTERP_FACTOR = 4;
 	const int padded_size = m_fftSize * INTERP_FACTOR;
+	const int padded_freq_size = padded_size / 2 + 1;
+	const int orig_freq_size = m_fftSize / 2 + 1;
 
-	// Calculate band shift
+	// Zero out the padded frequency buffer.
+	std::fill(m_paddedFreqData.begin(), m_paddedFreqData.end(), kiss_fft_cpx{0.0f, 0.0f});
+
+	// Copy the original FFT data into the padded buffer with scaling.
+	for (int i = 0; i < orig_freq_size; i++) {
+		m_paddedFreqData[i].r = fft_data[i].r * INTERP_FACTOR;
+		m_paddedFreqData[i].i = fft_data[i].i * INTERP_FACTOR;
+	}
+
+	// Determine band shift and width (in original frequency bins).
 	int band_shift = m_bands[band2].m_startBin - m_bands[band1].m_startBin;
 	int band_width = m_bands[band1].m_endBin - m_bands[band1].m_startBin + 1;
 
-	// Scale band indices for padded size
-	band_shift *= INTERP_FACTOR;
-	band_width *= INTERP_FACTOR;
+	// Zero out the padded correlation buffer.
+	std::fill(m_paddedCorrData.begin(), m_paddedCorrData.end(), kiss_fft_cpx{0.0f, 0.0f});
 
-	// Cross-correlation in frequency domain
-	std::memset(m_paddedCorrData.data(), 0, sizeof(kiss_fft_cpx) * (padded_size / 2 + 1));
-
-	// Correlate corresponding bins from both bands
+	// Compute the normalized cross-correlation product over the band.
 	for (int i = 0; i < band_width; i++) {
-		int bin1 = m_bands[band1].m_startBin * INTERP_FACTOR + i;
+		int bin1 = m_bands[band1].m_startBin + i;
 		int bin2 = bin1 + band_shift;
 
-		if (bin2 <= m_bands[band2].m_endBin * INTERP_FACTOR) {
+		if (bin2 >= 0 && bin2 <= m_bands[band2].m_endBin &&
+			bin1 < orig_freq_size && bin2 < orig_freq_size) {
+
+			// Use the padded frequency data instead of the original fft_data.
 			float real1 = m_paddedFreqData[bin1].r;
 			float imag1 = m_paddedFreqData[bin1].i;
 			float real2 = m_paddedFreqData[bin2].r;
 			float imag2 = m_paddedFreqData[bin2].i;
 
-			// Normalize magnitudes
+			// Normalize the magnitudes.
 			float mag1 = sqrtf(real1 * real1 + imag1 * imag1);
 			float mag2 = sqrtf(real2 * real2 + imag2 * imag2);
 
@@ -363,16 +323,17 @@ float FFTSyncCheck::calculateBandDelayFFT(const kiss_fft_cpx* fft_data, int band
 				real2 /= mag2;
 				imag2 /= mag2;
 
-				m_paddedCorrData[i].r = real2 * real1 + imag2 * imag1;
-				m_paddedCorrData[i].i = imag2 * real1 - real2 * imag1;
+				// Store the normalized cross-correlation product in the padded buffer.
+				m_paddedCorrData[bin1].r = real2 * real1 + imag2 * imag1;
+				m_paddedCorrData[bin1].i = imag2 * real1 - real2 * imag1;
 			}
 		}
 	}
 
-	// Execute inverse FFT using pre-allocated configuration
-	kiss_fftri(m_paddedInverseCfg, m_paddedCorrData.data(), m_paddedTimeData.data());
+	// Perform inverse FFT on the zero-padded cross-correlation product.
+	kiss_fftri(m_paddedInverseCfg.get(), m_paddedCorrData.data(), m_paddedTimeData.data());
 
-	// Find maximum correlation peak and neighboring samples
+	// Find the index of the maximum correlation peak.
 	float max_corr = 0.0f;
 	int max_idx = 0;
 	for (int i = 0; i < padded_size; i++) {
@@ -383,7 +344,7 @@ float FFTSyncCheck::calculateBandDelayFFT(const kiss_fft_cpx* fft_data, int band
 		}
 	}
 
-	// Parabolic interpolation for sub-sample accuracy
+	// Apply parabolic interpolation for sub-sample accuracy.
 	float alpha = m_paddedTimeData[(max_idx + padded_size - 1) % padded_size];
 	float beta = m_paddedTimeData[max_idx];
 	float gamma = m_paddedTimeData[(max_idx + 1) % padded_size];
@@ -392,12 +353,12 @@ float FFTSyncCheck::calculateBandDelayFFT(const kiss_fft_cpx* fft_data, int band
 	float p = 0.5f * (alpha - gamma) / (alpha - 2.0f * beta + gamma);
 	float interpolated_idx = max_idx + p;
 
-	// Convert index to time delay
+	// Convert the index to a time delay (accounting for the interpolation factor).
 	float delay = 0.0f;
 	if (interpolated_idx > padded_size / 2) {
-		delay = -(padded_size - interpolated_idx) / static_cast<float>(m_sampleRate);
+		delay = -(padded_size - interpolated_idx) / (static_cast<float>(m_sampleRate) * INTERP_FACTOR);
 	} else {
-		delay = interpolated_idx / static_cast<float>(m_sampleRate);
+		delay = interpolated_idx / (static_cast<float>(m_sampleRate) * INTERP_FACTOR);
 	}
 
 	return delay;
@@ -430,22 +391,19 @@ void FFTSyncCheck::printDelayStats()
 
 void FFTSyncCheck::processSampleBlock(const std::vector<float> &samples)
 {
-	const int INTERP_FACTOR = 4;
-	const int padded_size = m_fftSize * INTERP_FACTOR;
-
-	// Apply Hann window to the time-domain signal and zero-pad
-	std::memset(m_paddedTimeData.data(), 0, sizeof(float) * padded_size);
-	for (int i = 0; i < m_fftSize; i++) {
+	// Apply Hann window to the time-domain signal
+	std::fill(m_analysisTimeData.begin(), m_analysisTimeData.end(), 0.0f);
+	for (int i = 0; i < m_fftSize && i < (int)samples.size(); i++) {
 		float window_val = 0.5f * (1.0f - cosf(2.0f * M_PI * i / (m_fftSize - 1)));
-		m_paddedTimeData[i] = samples[i] * window_val;
+		m_analysisTimeData[i] = samples[i] * window_val;
 	}
 
-	// Execute forward FFT once using pre-allocated configuration
-	kiss_fftr(m_paddedForwardCfg, m_paddedTimeData.data(), m_paddedFreqData.data());
+	// Execute forward FFT on the windowed data
+	kiss_fftr(m_analysisForwardCfg.get(), m_analysisTimeData.data(), m_analysisFreqData.data());
 
-	// Calculate delays relative to band 0 using the pre-computed FFT data
+	// Calculate delays relative to band 0 using the FFT data
 	for (int i = 1; i < NUM_BANDS; i++) {
-		float delay = calculateBandDelayFFT(m_paddedFreqData.data(), 0, i);
+		float delay = calculateBandDelayFFT(m_analysisFreqData, 0, i);
 		m_delayStats[i].update(delay);
 	}
 }
@@ -458,7 +416,7 @@ float FFTSyncCheck::getFilteredDelay(int band)
 	return 0.0f;
 }
 
-std::vector<float> FFTSyncCheck::generateTestSignal(float duration, const std::vector<float> &delays_ms, bool verbose)
+std::vector<float> FFTSyncCheck::generateTestSignal(float duration, std::vector<float> &delays_ms, bool verbose)
 {
 	if (delays_ms.size() != NUM_BANDS) {
 		throw std::runtime_error("Delays array must match number of bands");
@@ -478,16 +436,6 @@ std::vector<float> FFTSyncCheck::generateTestSignal(float duration, const std::v
 		std::mt19937 gen(rd());
 		std::uniform_real_distribution<float> dist(-0.5f, 0.5f);
 
-		// Calculate band width and leave 10% guard band on each side
-		int band_width = m_bands[0].m_endBin - m_bands[0].m_startBin + 1;
-		int guard_bins = band_width / 10; // 10% guard band
-
-		// Create a wider reference band
-		Band ref_band = {
-			m_bands[0].m_startBin + guard_bins, // Start after guard band
-			m_bands[0].m_endBin - guard_bins	// End before guard band
-		};
-
 		// Generate white noise reference signal
 		for (int i = 0; i < num_samples; i++) {
 			reference_signal[i] = dist(gen);
@@ -506,11 +454,6 @@ std::vector<float> FFTSyncCheck::generateTestSignal(float duration, const std::v
 	}
 	int last_percent = 0;
 
-	// Temporary buffers for FFT processing
-	std::vector<float> windowed_input(BLOCK_SIZE);
-	std::vector<kiss_fft_cpx> fft_data(BLOCK_SIZE / 2 + 1);
-	kiss_fftr_cfg fft_cfg = kiss_fftr_alloc(BLOCK_SIZE, 0, nullptr, nullptr);
-
 	// Process each block
 	for (int offset = 0; offset < num_samples; offset += HOP_SIZE) {
 		if (verbose) {
@@ -528,19 +471,20 @@ std::vector<float> FFTSyncCheck::generateTestSignal(float duration, const std::v
 		std::vector<float> input_block(BLOCK_SIZE, 0.0f);
 		std::vector<float> block_output(BLOCK_SIZE);
 		int samples_to_copy = std::min(BLOCK_SIZE, num_samples - offset);
-		std::memcpy(input_block.data(), reference_signal.data() + offset, samples_to_copy * sizeof(float));
+		std::copy(reference_signal.begin() + offset,
+				 reference_signal.begin() + offset + samples_to_copy,
+				 input_block.begin());
 
-		// Apply window and perform FFT once
-		processors[0].applyWindow(input_block.data(), windowed_input.data(), BLOCK_SIZE);
-		kiss_fftr(fft_cfg, windowed_input.data(), fft_data.data());
-
-		// Process each band using the same FFT data
+		// Process each band
 		for (int band = 0; band < NUM_BANDS; band++) {
-			processors[band].processBlockWithShiftFFT(fft_data.data(), block_output.data());
+			processors[band].processBlockWithShift(input_block, block_output);
 
 			// Store band signal and add to mixed output with appropriate delay
 			int valid_samples = std::min(HOP_SIZE, num_samples - offset);
-			int delay_samples = static_cast<int>(delays_ms[band] * m_sampleRate / 1000);
+			int delay_samples = static_cast<int>(roundf(delays_ms[band] * m_sampleRate / 1000));
+
+			// recalculate actual delay
+			delays_ms[band] = 1000.0f * delay_samples / m_sampleRate;
 
 			for (int i = 0; i < valid_samples; i++) {
 				int out_idx = offset + i;
@@ -560,9 +504,6 @@ std::vector<float> FFTSyncCheck::generateTestSignal(float duration, const std::v
 		}
 		printf("] 100%%\n\n");
 	}
-
-	// Clean up
-	free(fft_cfg);
 
 	// Save individual band signals and mixed signal to WAV files
 	SF_INFO sf_info;
