@@ -1,56 +1,21 @@
 #pragma once
 
-#include "kiss_fftr.h"
-#include <vector>
-#include <complex>
-#include <cstring>
-#include <cstdio>
-#include <algorithm>
-#include <random>
-#include <stdexcept>
-#include <cmath>
+#include "BandProcessor.h"
+#include "SyncCheckConfig.h"
 #include <cstdlib> // for free
-#include <memory>
-
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
-
-// Forward declare the FFT configuration type
-struct kiss_fftr_state;
-typedef struct kiss_fftr_state* kiss_fftr_cfg;
-
-// Define the deleter type
-using kiss_fftr_deleter = void(*)(void*);
 
 /**
- * @brief FFTSyncCheck performs FFT‐based synchronization checks across multiple frequency bands.
+ * @brief FFTSyncCheck performs FFT-based synchronization checks across multiple frequency bands.
  */
 class FFTSyncCheck
 {
 public:
 	/**
-	 * @brief Number of frequency bands used in analysis.
-	 */
-	static constexpr int NUM_BANDS = 8;
-
-	/**
-	 * @brief Block size used for analysis and test signal generation.
-	 */
-	static constexpr int BLOCK_SIZE = 4096;
-
-	/**
-	 * @brief Interpolation factor for delay calculations.
-	 */
-	static constexpr int INTERP_FACTOR = 4;
-
-	/**
 	 * @brief Constructs the FFTSyncCheck object.
 	 *
-	 * @param fft_size FFT size to use for analysis.
-	 * @param sample_rate Sampling rate of the signal.
+	 * @param config Configuration object for the sync checker
 	 */
-	FFTSyncCheck(int fft_size = BLOCK_SIZE, int sample_rate = 48000);
+	explicit FFTSyncCheck(const SyncCheckConfig& config = SyncCheckConfig());
 
 	/**
 	 * @brief Destructor that cleans up Kiss FFT configurations and allocated buffers.
@@ -58,43 +23,45 @@ public:
 	~FFTSyncCheck();
 
 	/**
-	 * @brief Extract a specific frequency band from input frequency‐domain data.
+	 * @brief Extract a specific frequency band from input frequency-domain data.
 	 *
 	 * @param input Kiss FFT complex input array.
 	 * @param output Kiss FFT complex output array in which the extracted band will be stored.
 	 * @param band_idx Index of the band to extract.
 	 */
-	void extractBand(const std::vector<kiss_fft_cpx>& input, std::vector<kiss_fft_cpx>& output, int band_idx);
+	void extractBand(const std::vector<kiss_fft_cpx>& input, std::vector<kiss_fft_cpx>& output, std::size_t band_idx);
 
 	/**
-	 * @brief Calculate the cross‐correlation delay between two frequency bands.
+	 * @brief Calculate the cross-correlation delay between two frequency bands.
 	 *
-	 * @param signal Input time‐domain signal.
+	 * @param signal Input time-domain signal.
 	 * @param band1 Index of the first (reference) band.
 	 * @param band2 Index of the second band.
 	 * @return Calculated delay in seconds.
 	 */
-	float calculateBandDelay(const std::vector<float> &signal, int band1, int band2);
+	float calculateBandDelay(const std::vector<float> &signal, std::size_t band1, std::size_t band2);
 
 	/**
-	 * @brief Calculate the cross‐correlation delay between two frequency bands using pre-computed FFT data
+	 * @brief Calculate the cross-correlation delay between two frequency bands using pre-computed FFT data
 	 *
 	 * @param fft_data Pre-computed FFT data
 	 * @param band1 Index of the first (reference) band
 	 * @param band2 Index of the second band
 	 * @return Calculated delay in seconds
 	 */
-	float calculateBandDelayFFT(const std::vector<kiss_fft_cpx>& fft_data, int band1, int band2);
+	float calculateBandDelayFFT(const std::vector<kiss_fft_cpx>& fft_data, std::size_t band1, std::size_t band2);
 
 	/**
 	 * @brief Print comprehensive delay statistics for each frequency band.
+	 *
+	 * @param expected_delays_ms Optional vector of expected delays in milliseconds for each band
 	 */
-	void printDelayStats();
+	void printDelayStats(const std::vector<float>& expected_delays_ms = std::vector<float>());
 
 	/**
 	 * @brief Process a block of samples and update delay statistics.
 	 *
-	 * @param samples Vector containing time‐domain samples.
+	 * @param samples Vector containing time-domain samples.
 	 */
 	void processSampleBlock(const std::vector<float> &samples);
 
@@ -104,42 +71,30 @@ public:
 	 * @param band Index of the band.
 	 * @return Filtered delay in seconds.
 	 */
-	float getFilteredDelay(int band);
+	float getFilteredDelay(std::size_t band);
 
 	/**
-	 * @brief Generate a test signal with specified delays for all bands using overlap‐add processing.
-	 *
-	 * @param duration Duration of the test signal in seconds.
-	 * @param delays_ms Vector containing delays (in milliseconds) for each band.
-	 * @param verbose If true, prints progress and quality metrics.
-	 * @return Generated mixed test signal.
+	 * @brief Get the sample rate.
+	 * @return The sample rate.
 	 */
-	std::vector<float> generateTestSignal(float duration, std::vector<float> &delays_ms, bool verbose = true);
+	int getSampleRate() const { return m_config.getSampleRate(); }
 
 	/**
-	 * @brief Sampling rate.
+	 * @brief Get the current configuration
+	 * @return The current configuration
 	 */
-	const int m_sampleRate;
-
-	/**
-	 * @brief FFT size.
-	 */
-	const int m_fftSize;
+	const SyncCheckConfig& getConfig() const { return m_config; }
 
 private:
 	/**
-	 * @brief Structure representing a frequency band.
+	 * @brief Configuration object
 	 */
-	struct Band
-	{
-		int m_startBin; ///< Starting FFT bin index.
-		int m_endBin;	///< Ending FFT bin index.
-	};
+	SyncCheckConfig m_config;
 
 	/**
 	 * @brief Vector holding frequency band definitions.
 	 */
-	std::vector<Band> m_bands;
+	std::vector<SyncCheckConfig::Band> m_bands;
 
 	/**
 	 * @brief Structure for tracking delay measurements and statistics.
@@ -170,10 +125,49 @@ private:
 			}
 			m_history.push_back(new_delay);
 
-			// Calculate median.
+			// by default use median
 			std::vector<float> sorted = m_history;
 			std::sort(sorted.begin(), sorted.end());
 			m_filteredDelay = sorted[sorted.size() / 2];
+
+			// Use Median Absolute Deviation (MAD) to handle outliers
+			if (m_history.size() == HISTORY_SIZE) {
+
+				// Calculate median
+				std::vector<float> sorted = m_history;
+				std::sort(sorted.begin(), sorted.end());
+				float median = sorted[sorted.size() / 2];
+
+				// Calculate absolute deviations from median
+				std::vector<float> deviations;
+				deviations.reserve(HISTORY_SIZE);
+				for (float val : m_history) {
+					deviations.push_back(fabsf(val - median));
+				}
+
+				// Calculate MAD (median of absolute deviations)
+				std::sort(deviations.begin(), deviations.end());
+				float mad = deviations[deviations.size() / 2];
+
+				// For a normal distribution, MAD_SCALE = 1.4826 converts MAD to standard deviation
+				// OUTLIER_THRESHOLD = 3.0 is the common "3-sigma rule" - data within 3 std devs
+				const float MAD_SCALE = 1.4826f;     // 1/Φ^(-1)(3/4) where Φ is normal CDF
+				const float OUTLIER_THRESHOLD = 3.0f; // Points >3σ from median considered outliers
+				float scaled_mad = mad * MAD_SCALE;   // Convert MAD to equivalent std deviation
+				std::vector<float> inliers;
+
+				for (float val : m_history) {
+					if (fabsf(val - median) <= OUTLIER_THRESHOLD * scaled_mad) {
+						inliers.push_back(val);
+					}
+				}
+
+				// Use median of inliers as filtered delay
+				if (!inliers.empty()) {
+					std::sort(inliers.begin(), inliers.end());
+					m_filteredDelay = inliers[inliers.size() / 2];
+				}
+			}
 
 			// Calculate confidence based on variance.
 			float sum = 0.0f;
@@ -202,17 +196,17 @@ private:
 	std::unique_ptr<kiss_fftr_state, kiss_fftr_deleter> m_analysisInverseCfg;
 
 	/**
-	 * @brief Buffer for time‐domain data used in analysis.
+	 * @brief Buffer for time-domain data used in analysis.
 	 */
 	std::vector<float> m_analysisTimeData;
 
 	/**
-	 * @brief Buffer for frequency‐domain data used in analysis.
+	 * @brief Buffer for frequency-domain data used in analysis.
 	 */
 	std::vector<kiss_fft_cpx> m_analysisFreqData;
 
 	/**
-	 * @brief Buffer for storing frequency‐domain cross‐correlation data.
+	 * @brief Buffer for storing frequency-domain cross-correlation data.
 	 */
 	std::vector<kiss_fft_cpx> m_correlationData;
 
@@ -224,196 +218,4 @@ private:
 	std::vector<float> m_paddedTimeData;
 	std::vector<kiss_fft_cpx> m_paddedCorrData;
 	std::vector<kiss_fft_cpx> m_paddedFreqData;
-
-	/**
-	 * @brief Structure representing signal quality metrics.
-	 */
-	struct QualityMetrics
-	{
-		float m_snr;			///< Signal-to-noise ratio (dB).
-		float m_bandIsolation;	///< dB isolation between bands.
-		float m_phaseCoherence; ///< Phase coherence metric.
-
-		/**
-		 * @brief Print the quality metrics.
-		 */
-		void print() const
-		{
-			printf("Signal Quality Metrics:\n");
-			printf("  SNR: %.2f dB\n", m_snr);
-			printf("  Band Isolation: %.2f dB\n", m_bandIsolation);
-			printf("  Phase Coherence: %.2f\n", m_phaseCoherence);
-		}
-	};
-
-	/**
-	 * @brief Inner class for processing a specific frequency band using the overlap‐add method.
-	 */
-	class BandProcessor
-	{
-	public:
-		/**
-		 * @brief Constructs a BandProcessor for a given frequency band.
-		 *
-		 * @param block_size Size of the processing block.
-		 * @param overlap_size Number of samples to overlap.
-		 * @param band Reference to the frequency band to process.
-		 */
-		BandProcessor(int block_size, int overlap_size, const Band &band, int sample_rate);
-
-		/**
-		 * @brief Copy constructor.
-		 */
-		BandProcessor(const BandProcessor &other);
-
-		/**
-		 * @brief Move constructor.
-		 */
-		BandProcessor(BandProcessor &&other) noexcept;
-
-		/**
-		 * @brief Destructor that cleans up Kiss FFT resources.
-		 */
-		~BandProcessor();
-
-		/**
-		 * @brief Assignment operator.
-		 */
-		BandProcessor &operator=(const BandProcessor &other);
-
-		/**
-		 * @brief Move assignment operator.
-		 */
-		BandProcessor &operator=(BandProcessor &&other) noexcept;
-
-		/**
-		 * @brief Process a block of input samples and produce an output block.
-		 *
-		 * @param input Reference to input samples.
-		 * @param output Reference to output samples.
-		 */
-		void processBlock(const std::vector<float>& input, std::vector<float>& output);
-
-		/**
-		 * @brief Process a block with pre-computed FFT data
-		 * @param fft_data Pre-computed FFT data
-		 * @param output Output buffer of size m_blockSize
-		 */
-		void processBlockFFT(const std::vector<kiss_fft_cpx>& fft_data, std::vector<float>& output);
-
-		/**
-		 * @brief Process a block of samples with frequency shifting
-		 * @param input Reference to input buffer of size m_blockSize
-		 * @param output Reference to output buffer of size m_blockSize
-		 */
-		void processBlockWithShift(const std::vector<float>& input, std::vector<float>& output);
-
-		/**
-		 * @brief Process a block with frequency shifting using pre-computed FFT data
-		 * @param fft_data Pre-computed FFT data
-		 * @param output Reference to output buffer of size m_blockSize
-		 */
-		void processBlockWithShiftFFT(const std::vector<kiss_fft_cpx>& fft_data, std::vector<float>& output);
-
-		/**
-		 * @brief Apply window function to input data
-		 * @param input Reference to input buffer
-		 * @param output Reference to output buffer
-		 * @param size Buffer size
-		 */
-		void applyWindow(const std::vector<float>& input, std::vector<float>& output, int size) const;
-
-		/**
-		 * @brief Get the band isolation metric in dB.
-		 *
-		 * @return Band isolation in dB.
-		 */
-		float getBandIsolation() const;
-
-		/**
-		 * @brief Allocate resources for the band processor.
-		 */
-		void allocateResources();
-
-		/**
-		 * @brief Free resources for the band processor.
-		 */
-		void freeResources();
-
-		/**
-		 * @brief Sets the target frequency for shifting the band
-		 * @param targetFreqHz Target center frequency in Hz
-		 */
-		void setFrequencyShift(float targetFreqHz);
-
-	private:
-		/**
-		 * @brief Kiss FFT configuration for forward (real-to-complex) transform.
-		 */
-		std::unique_ptr<kiss_fftr_state, kiss_fftr_deleter> m_forwardCfg;
-
-		/**
-		 * @brief Kiss FFT configuration for inverse (complex-to-real) transform.
-		 */
-		std::unique_ptr<kiss_fftr_state, kiss_fftr_deleter> m_inverseCfg;
-
-		/**
-		 * @brief Buffer for time‐domain data.
-		 */
-		std::vector<float> m_timeData;
-
-		/**
-		 * @brief Buffer for frequency‐domain data.
-		 */
-		std::vector<kiss_fft_cpx> m_freqData;
-
-		/**
-		 * @brief Working buffer for band-filtered data.
-		 */
-		std::vector<kiss_fft_cpx> m_workingFreqData;
-
-		/**
-		 * @brief Reference to the associated frequency band.
-		 */
-		Band m_band;
-
-		/**
-		 * @brief Buffer for overlap‐add.
-		 */
-		std::vector<float> m_overlapBuffer;
-
-		/**
-		 * @brief Processing block size.
-		 */
-		int m_blockSize;
-
-		/**
-		 * @brief Overlap size between blocks.
-		 */
-		int m_overlapSize;
-
-		/**
-		 * @brief Hann window.
-		 */
-		std::vector<float> m_window;
-
-		/**
-		 * @brief Accumulated power within the band.
-		 */
-		double m_inBandPower;
-
-		/**
-		 * @brief Accumulated power outside the band.
-		 */
-		double m_outBandPower;
-
-		/**
-		 * @brief Sample rate.
-		 */
-		int m_sampleRate;
-
-		float m_shiftFreq;           // Frequency shift amount in Hz
-		float m_phaseAccumulator;    // Accumulated phase for continuous modulation
-		std::vector<float> m_modulatorBuffer;  // Buffer for modulation waveform
-	};
 };

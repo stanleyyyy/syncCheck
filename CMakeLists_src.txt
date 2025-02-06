@@ -1,9 +1,19 @@
 set(syncCheck_HEADERS
 	${syncCheck_PUBLIC_HEADERS}
+	DelayLine.h
+	Logger.h
+	SyncCheck.h
+	SyncCheckConfig.h
+	TestSignalGenerator.h
 )
 
 set(syncCheck_SOURCES
+	BandProcessor.cpp
+	DelayLine.cpp
+	Logger.cpp
 	SyncCheck.cpp
+	SyncCheckConfig.cpp
+	TestSignalGenerator.cpp
 	kissfft/kiss_fft.c
 	kissfft/kiss_fftr.c
 )

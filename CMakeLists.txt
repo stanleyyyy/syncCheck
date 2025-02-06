@@ -1,5 +1,8 @@
 set(syncCheck_PUBLIC_HEADERS
+	BandProcessor.h
 	SyncCheck.h
+	SyncCheckConfig.h
+	TestSignalGenerator.h
 )
 
 nsdk_package_create(
