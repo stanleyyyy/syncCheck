@@ -22,4 +22,6 @@ include_directories(${CMAKE_CURRENT_BINARY_DIR})
 include_directories(kissfft)
 
 add_library(nsdk_syncCheck SHARED ${syncCheck_SOURCES} ${syncCheck_HEADERS})
+add_library(asound_module_pcm_bandmover SHARED pcm_bandmover.cpp)
+
 add_executable(nsdk_syncCheck_test main.cpp)
