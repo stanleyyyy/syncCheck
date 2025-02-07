@@ -140,6 +140,17 @@ void TestSignalGenerator::generateReferenceSignal(std::vector<float>& output, st
 			float pulse = 1.0f * (1.0f - static_cast<float>(sample_in_second) / (0.01f * m_config.getSampleRate()));
 			output[i] += pulse;
 		}
+
+		// Generate sine wave for testing
+		float freq = 0.3f; // 440 Hz
+		float sample_rate = m_config.getSampleRate();
+		static float phase = 0.0f;
+
+		output[i] += 0.05f * sinf(2.0f * M_PI * freq * phase);
+		phase += 1.0f / sample_rate;
+		if (phase >= 1.0f) {
+			phase -= 1.0f;
+		}
 	}
 
 	m_currentSample += numFrames;
