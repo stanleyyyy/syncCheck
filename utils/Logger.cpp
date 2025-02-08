@@ -37,7 +37,7 @@ bool Logger::isEnabledFor(LogLevel level) const
 	return level <= m_logLevel;
 }
 
-void Logger::logMessage(LogLevel level, const std::string& message)
+void Logger::logMessage(LogLevel level, const std::string& message, bool inlineMode)
 {
 	if (!isEnabledFor(level)) {
 		return;
@@ -87,5 +87,9 @@ void Logger::logMessage(LogLevel level, const std::string& message)
 	}
 
 	// Output format: timestamp [pid.tid] [LEVEL] message
-	std::cout << timeStr.str() << levelStr << " " << truncatedMessage << std::endl;
+	if (inlineMode) {
+		std::cout << truncatedMessage << std::flush;
+	} else {
+		std::cout << timeStr.str() << levelStr << " " << truncatedMessage << std::endl;
+	}
 }
