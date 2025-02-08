@@ -265,7 +265,7 @@ std::vector<float> TestSignalGenerator::renderTestSignal(float duration, std::ve
 
 	if (verbose) {
 		DBG_INFO("Generating test signal:");
-		DBG_INFO("[");
+		DBG_INFO_INLINE("[");
 	}
 	int last_percent = 0;
 
@@ -275,7 +275,7 @@ std::vector<float> TestSignalGenerator::renderTestSignal(float duration, std::ve
 			int percent = (offset * 100) / numFrames;
 			if (percent > last_percent) {
 				for (int i = last_percent; i < percent; i += 2) {
-					DBG_INFO("=");
+					DBG_INFO_INLINE("=");
 					fflush(stdout);
 				}
 				last_percent = percent;
@@ -291,9 +291,9 @@ std::vector<float> TestSignalGenerator::renderTestSignal(float duration, std::ve
 
 	if (verbose) {
 		for (int i = last_percent; i <= 100; i += 2) {
-			DBG_INFO("=");
+			DBG_INFO_INLINE("=");
 		}
-		DBG_INFO("] 100%");
+		DBG_INFO_INLINE("] 100%" << "\n");
 		m_metrics.print();
 	}
 
