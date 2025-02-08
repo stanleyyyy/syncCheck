@@ -1,31 +1,33 @@
+include_directories(${CMAKE_CURRENT_SOURCE_DIR})
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/dsp)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/utils)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/kissfft)
+
 set(syncCheck_HEADERS
 	${syncCheck_PUBLIC_HEADERS}
-	DelayLine.h
-	Logger.h
-	SyncCheck.h
-	SyncCheckConfig.h
-	TestSignalGenerator.h
+	dsp/DelayLine.h
+	dsp/SyncCheck.h
+	dsp/SyncCheckConfig.h
+	dsp/TestSignalGenerator.h
+	utils/Logger.h
 )
 
 set(syncCheck_SOURCES
-	BandProcessor.cpp
-	DelayLine.cpp
-	Logger.cpp
-	SyncCheck.cpp
-	SyncCheckConfig.cpp
-	TestSignalGenerator.cpp
+	dsp/BandProcessor.cpp
+	dsp/DelayLine.cpp
+	dsp/SyncCheck.cpp
+	dsp/SyncCheckConfig.cpp
+	dsp/TestSignalGenerator.cpp
+	utils/Logger.cpp
 	kissfft/kiss_fft.c
 	kissfft/kiss_fftr.c
 )
 
-include_directories(${CMAKE_CURRENT_BINARY_DIR})
-include_directories(kissfft)
-
 add_library(nsdk_syncCheck SHARED ${syncCheck_SOURCES} ${syncCheck_HEADERS})
-add_library(asound_module_pcm_bandmover SHARED pcm_bandmover.cpp)
+add_library(asound_module_pcm_bandmover SHARED alsa-plugin/pcm_bandmover.cpp)
 
 # Executable for test generator / sync check
-add_executable(nsdk_syncCheck_test main.cpp)
+add_executable(nsdk_syncCheck_test test/main.cpp)
 
 # Executable for the actual sync checker application
 add_executable(alsa_sync_check alsaSyncCheck.cpp)
