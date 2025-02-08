@@ -31,3 +31,6 @@ add_executable(nsdk_syncCheck_test test/main.cpp)
 
 # Executable for the actual sync checker application
 add_executable(alsa_sync_check alsaSyncCheck.cpp)
+
+# Executable for the sync generator application
+add_executable(sync_generator syncGenerator.cpp)

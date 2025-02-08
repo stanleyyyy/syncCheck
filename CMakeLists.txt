@@ -30,10 +30,14 @@ target_link_libraries(asound_module_pcm_bandmover PRIVATE
 )
 
 target_link_libraries(alsa_sync_check PUBLIC
-	${QtCore}
-	nsdk_api
 	nsdk_syncCheck
+	nsdk_api
 	asound
+)
+
+target_link_libraries(sync_generator PUBLIC
+	nsdk_syncCheck
+	nsdk_api
 )
 
 target_link_libraries(nsdk_syncCheck_test PUBLIC
@@ -45,3 +49,4 @@ install(TARGETS nsdk_syncCheck DESTINATION ${CMAKE_INSTALL_LIBDIR})
 install(TARGETS asound_module_pcm_bandmover DESTINATION ${CMAKE_INSTALL_LIBDIR}/alsa-lib)
 install(TARGETS alsa_sync_check DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(TARGETS nsdk_syncCheck_test DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(TARGETS sync_generator DESTINATION ${CMAKE_INSTALL_BINDIR})
