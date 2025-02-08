@@ -24,4 +24,8 @@ include_directories(kissfft)
 add_library(nsdk_syncCheck SHARED ${syncCheck_SOURCES} ${syncCheck_HEADERS})
 add_library(asound_module_pcm_bandmover SHARED pcm_bandmover.cpp)
 
+# Executable for test generator / sync check
 add_executable(nsdk_syncCheck_test main.cpp)
+
+# Executable for the actual sync checker application
+add_executable(alsa_sync_check alsaSyncCheck.cpp)

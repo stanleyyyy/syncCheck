@@ -245,3 +245,12 @@ float FFTSyncCheck::getFilteredDelay(std::size_t band)
 	}
 	return 0.0f;
 }
+
+std::vector<float> FFTSyncCheck::getDelayEstimates() const
+{
+	std::vector<float> delays;
+	for (std::size_t i = 1; i < m_config.getNumBands(); i++) {
+		delays.push_back(m_delayStats[i].m_filteredDelay);
+	}
+	return delays;
+}

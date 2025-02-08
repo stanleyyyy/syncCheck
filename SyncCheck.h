@@ -74,6 +74,12 @@ public:
 	float getFilteredDelay(std::size_t band);
 
 	/**
+	 * @brief Get the delay estimates for all frequency bands.
+	 * @return Vector of delay estimates in seconds.
+	 */
+	std::vector<float> getDelayEstimates() const;
+
+	/**
 	 * @brief Get the sample rate.
 	 * @return The sample rate.
 	 */
