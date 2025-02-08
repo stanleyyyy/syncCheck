@@ -1,17 +1,24 @@
 #include "Logger.h"
-#include <cstdarg>
 #include <cstdio>
 #include <ctime>
 #include <sys/time.h>
+#include <chrono>
+#include <iomanip>
+#include <sstream>
+#include <unistd.h>
+#include <sys/syscall.h>
 
-Logger &Logger::getInstance()
+#include "Logger.h"
+#include <iostream>
+
+Logger& Logger::getInstance()
 {
 	static Logger instance;
 	return instance;
 }
 
 Logger::Logger()
-	: m_logLevel(LOG_INFO)
+	: m_logLevel(LOG_INFO)  // Default to INFO level
 {
 }
 
@@ -25,101 +32,60 @@ LogLevel Logger::getLogLevel() const
 	return m_logLevel;
 }
 
-void Logger::fatal(const char *format, ...)
+bool Logger::isEnabledFor(LogLevel level) const
 {
-	if (m_logLevel >= LOG_FATAL) {
-		va_list args;
-		va_start(args, format);
-		log(LOG_FATAL, format, args);
-		va_end(args);
-	}
+	return level <= m_logLevel;
 }
 
-void Logger::error(const char *format, ...)
+void Logger::logMessage(LogLevel level, const std::string& message)
 {
-	if (m_logLevel >= LOG_ERROR) {
-		va_list args;
-		va_start(args, format);
-		log(LOG_ERROR, format, args);
-		va_end(args);
+	if (!isEnabledFor(level)) {
+		return;
 	}
-}
 
-void Logger::warning(const char *format, ...)
-{
-	if (m_logLevel >= LOG_WARNING) {
-		va_list args;
-		va_start(args, format);
-		log(LOG_WARNING, format, args);
-		va_end(args);
+	// Get current time
+	auto now = std::chrono::system_clock::now();
+	auto time = std::chrono::system_clock::to_time_t(now);
+	auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) % 1000;
+
+	// Format timestamp and process/thread ID
+	std::ostringstream timeStr;
+	timeStr << std::put_time(std::localtime(&time), "%Y%m%d %H:%M:%S")
+		<< "." << std::setfill('0') << std::setw(3) << ms.count()
+		<< " [" << getpid() << "." << syscall(SYS_gettid) << "] ";
+
+	// Truncate message if it exceeds maximum length
+	std::string truncatedMessage = message;
+	if (truncatedMessage.length() > MAX_MSG_LENGTH) {
+		truncatedMessage = truncatedMessage.substr(0, MAX_MSG_LENGTH - 3) + "...";
 	}
-}
 
-void Logger::info(const char *format, ...)
-{
-	if (m_logLevel >= LOG_INFO) {
-		va_list args;
-		va_start(args, format);
-		log(LOG_INFO, format, args);
-		va_end(args);
-	}
-}
-
-void Logger::debug(const char *format, ...)
-{
-	if (m_logLevel >= LOG_DEBUG) {
-		va_list args;
-		va_start(args, format);
-		log(LOG_DEBUG, format, args);
-		va_end(args);
-	}
-}
-
-void Logger::trace(const char *format, ...)
-{
-	if (m_logLevel >= LOG_TRACE) {
-		va_list args;
-		va_start(args, format);
-		log(LOG_TRACE, format, args);
-		va_end(args);
-	}
-}
-
-void Logger::log(LogLevel level, const char *format, va_list args)
-{
-	struct timeval tv;
-	gettimeofday(&tv, NULL);
-
-	char time_str[32];
-	strftime(time_str, sizeof(time_str), "%Y%m%d %H:%M:%S", localtime(&tv.tv_sec));
-
-	const char *level_str;
+	// Get level prefix
+	const char* levelStr;
 	switch (level) {
-	case LOG_FATAL:
-		level_str = "FATAL";
-		break;
-	case LOG_ERROR:
-		level_str = "ERROR";
-		break;
-	case LOG_WARNING:
-		level_str = "WARN ";
-		break;
-	case LOG_INFO:
-		level_str = "INFO ";
-		break;
-	case LOG_DEBUG:
-		level_str = "DEBUG";
-		break;
-	case LOG_TRACE:
-		level_str = "TRACE";
-		break;
-	default:
-		level_str = "?????";
-		break;
+		case LOG_FATAL:
+			levelStr = "FATAL";
+			break;
+		case LOG_ERROR:
+			levelStr = "ERROR";
+			break;
+		case LOG_WARNING:
+			levelStr = "WARN";
+			break;
+		case LOG_INFO:
+			levelStr = "INFO";
+			break;
+		case LOG_DEBUG:
+			levelStr = "DEBUG";
+			break;
+		case LOG_TRACE:
+			levelStr = "TRACE";
+			break;
+		default:
+			levelStr = "UNKNOWN";
+			break;
 	}
 
-	char msg[MAX_MSG_LENGTH];
-	vsnprintf(msg, sizeof(msg), format, args);
-
-	fprintf(stderr, "%s.%03ld [%s] %s\n", time_str, tv.tv_usec / 1000, level_str, msg);
+	// Output format: timestamp [pid.tid] [LEVEL] message
+	std::cout << timeStr.str() << levelStr << " " << truncatedMessage << std::endl;
 }

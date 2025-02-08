@@ -28,11 +28,11 @@ int main()
 		-1.3f   // Band 7
 	};
 
-	LOG_INFO("Generating test signal...");
+	DBG_INFO("Generating test signal...");
 	TestSignalGenerator testSignalGenerator(config);
 	testSignalGenerator.enableWavDump(true, "test_signal");
 	std::vector<float> test_signal = testSignalGenerator.renderTestSignal(TEST_DURATION, test_delays);
-	LOG_INFO("Test signal generated, processing blocks...\n");
+	DBG_INFO("Test signal generated, processing blocks...");
 
 	float elapsed_time = 0.0f;
 	for (size_t i = 0; i < test_signal.size(); i += static_cast<size_t>(BLOCK_DURATION * syncChecker.getSampleRate())) {

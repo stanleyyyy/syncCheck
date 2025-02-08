@@ -3,6 +3,7 @@
 #include "Logger.h"
 #include <sndfile.h>
 #include <assert.h>
+#include <iomanip>
 
 TestSignalGenerator::TestSignalGenerator(const SyncCheckConfig& config)
 	: m_config(config)
@@ -263,8 +264,8 @@ std::vector<float> TestSignalGenerator::renderTestSignal(float duration, std::ve
 	std::vector<float> mixed_signal(numFrames);
 
 	if (verbose) {
-		LOG_INFO("Generating test signal:");
-		LOG_INFO("[");
+		DBG_INFO("Generating test signal:");
+		DBG_INFO("[");
 	}
 	int last_percent = 0;
 
@@ -274,7 +275,7 @@ std::vector<float> TestSignalGenerator::renderTestSignal(float duration, std::ve
 			int percent = (offset * 100) / numFrames;
 			if (percent > last_percent) {
 				for (int i = last_percent; i < percent; i += 2) {
-					LOG_INFO("=");
+					DBG_INFO("=");
 					fflush(stdout);
 				}
 				last_percent = percent;
@@ -290,9 +291,9 @@ std::vector<float> TestSignalGenerator::renderTestSignal(float duration, std::ve
 
 	if (verbose) {
 		for (int i = last_percent; i <= 100; i += 2) {
-			LOG_INFO("=");
+			DBG_INFO("=");
 		}
-		LOG_INFO("] 100%%");
+		DBG_INFO("] 100%");
 		m_metrics.print();
 	}
 
@@ -301,8 +302,8 @@ std::vector<float> TestSignalGenerator::renderTestSignal(float duration, std::ve
 
 void TestSignalGenerator::QualityMetrics::print() const
 {
-	LOG_INFO("Signal Quality Metrics:");
-	LOG_INFO("  SNR: %.2f dB", m_snr);
-	LOG_INFO("  Band Isolation: %.2f dB", m_bandIsolation);
-	LOG_INFO("  Phase Coherence: %.2f", m_phaseCoherence);
+	DBG_INFO("Signal Quality Metrics:");
+	DBG_INFO("  SNR: " << std::fixed << std::setprecision(2) << m_snr << " dB");
+	DBG_INFO("  Band Isolation: " << std::fixed << std::setprecision(2) << m_bandIsolation << " dB");
+	DBG_INFO("  Phase Coherence: " << std::fixed << std::setprecision(2) << m_phaseCoherence);
 }

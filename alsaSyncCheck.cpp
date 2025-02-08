@@ -7,10 +7,8 @@
 #include <chrono>
 
 #include "nsdkStacktrace.h"
-#include "nsdkDebug.h"
-#include "nsdkLogger.h"
-
 #include "SyncCheck.h"
+#include "Logger.h"
 
 // ANSI color codes
 #define ANSI_COLOR_RED "\x1b[31m"
@@ -20,8 +18,6 @@
 #define ANSI_COLOR_MAGENTA "\x1b[35m"
 #define ANSI_COLOR_CYAN "\x1b[36m"
 #define ANSI_COLOR_RESET "\x1b[0m"
-
-DBG_IMPL_DEBUG_MODULE( SyncCheck );
 
 static volatile bool g_running = true;
 
@@ -304,8 +300,11 @@ public:
 
 int main(int argc, char *argv[])
 {
-	NsdkLogger::instance().loadConfiguration("log.properties");
+	// Install stack trace handler
 	nsdkStacktrace::install();
+
+	// Set desired log level
+	Logger::getInstance().setLogLevel(LOG_DEBUG);
 
 	if (argc < 2) {
 		printUsage(argv[0]);

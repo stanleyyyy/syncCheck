@@ -1,5 +1,6 @@
 #include "SyncCheck.h"
 #include "Logger.h"
+#include <iomanip>
 
 FFTSyncCheck::FFTSyncCheck(const SyncCheckConfig& config)
 	: m_config(config)
@@ -158,11 +159,11 @@ float FFTSyncCheck::calculateBandDelayFFT(const std::vector<kiss_fft_cpx>& fft_d
 		} else {
 			delay = max_idx / (static_cast<float>(m_config.getSampleRate()) * m_config.getInterpFactor());
 		}
-		LOG_INFO("Delay %zu-%zu: %f ms", band1, band2, delay * 1000.0f);
+		DBG_INFO("Delay " << band1 << "-" << band2 << ": " << delay * 1000.0f << " ms");
 	}
 
 	if (band2 == m_config.getNumBands() - 1) {
-		LOG_INFO("");
+		DBG_INFO("");
 	}
 
 	// Apply parabolic interpolation for sub-sample accuracy.
@@ -188,9 +189,9 @@ float FFTSyncCheck::calculateBandDelayFFT(const std::vector<kiss_fft_cpx>& fft_d
 
 void FFTSyncCheck::printDelayStats(const std::vector<float>& expected_delays_ms)
 {
-	LOG_INFO("=== Delay Statistics and Measurements ===");
-	LOG_INFO("Band | Expected (ms) | Delay (ms) | Error (ms) | Confidence | Status");
-	LOG_INFO("-----+--------------+------------+-----------+-----------+-------------");
+	DBG_INFO("=== Delay Statistics and Measurements ===");
+	DBG_INFO("Band | Expected (ms) | Delay (ms) | Error (ms) | Confidence | Status");
+	DBG_INFO("-----+--------------+------------+-----------+-----------+-------------");
 
 	for (std::size_t i = 1; i < m_config.getNumBands(); i++) {
 		float delay_ms = m_delayStats[i].m_filteredDelay * 1000.0f;
@@ -206,17 +207,27 @@ void FFTSyncCheck::printDelayStats(const std::vector<float>& expected_delays_ms)
 			error = delay_ms - expected;
 		}
 
-		LOG_INFO("%4zu | %+11.3f | %+9.3f | %+8.3f | %9.3f | %s",
-			i, expected, delay_ms, error, conf, status);
+		DBG_INFO(std::setw(4) << i
+			<< " | " << std::showpos << std::setw(11) << std::fixed << std::setprecision(3) << expected
+			<< " | " << std::showpos << std::setw(9)  << std::fixed << std::setprecision(3) << delay_ms
+			<< " | " << std::showpos << std::setw(8)  << std::fixed << std::setprecision(3) << error << std::noshowpos
+			<< " | " << std::setw(9)  << std::fixed << std::setprecision(3) << conf
+			<< " | " << status);
 	}
 
-	LOG_INFO("Band Details:");
+	DBG_INFO("Band Details:");
 	for (std::size_t i = 1; i < m_config.getNumBands(); i++) {
 		float f_start = m_bands[i].m_startBin * static_cast<float>(m_config.getSampleRate()) / m_config.getBlockSize();
 		float f_end = m_bands[i].m_endBin * static_cast<float>(m_config.getSampleRate()) / m_config.getBlockSize();
-		LOG_INFO("Band %zu: %.0f Hz - %.0f Hz", i, f_start, f_end);
+
+		DBG_INFO("Band " << i
+			<< ": "
+			<< std::fixed << std::setprecision(0) << f_start
+			<< " Hz - "
+			<< std::fixed << std::setprecision(0) << f_end
+			<< " Hz");
 	}
-	LOG_INFO("");
+	DBG_INFO("");
 }
 
 void FFTSyncCheck::processSampleBlock(const std::vector<float> &samples)
