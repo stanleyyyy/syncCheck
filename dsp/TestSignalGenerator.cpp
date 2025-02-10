@@ -183,11 +183,15 @@ bool TestSignalGenerator::renderAudioBlock(std::vector<float>& output, std::size
 		// Get windowed FFT of processing buffer
 		const std::vector<kiss_fft_cpx> &band0_freqData = m_bandGenerator[0].applyWindowAndFFT(m_processingBuffer);
 
+		// Low/high bins covering all the bands
+		const std::size_t lowestBandStartBin = m_config.getBands()[0].m_startBin;
+		const std::size_t highestBandEndBin = m_config.getBands()[m_config.getNumBands() - 1].m_endBin;
+
 		// Process each band with full block size
 		for (std::size_t band = 0; band < m_config.getNumBands(); band++) {
 
 			// generate single band output (using FFT of processing buffer as source)
-			m_bandGenerator[band].processBlockWithShiftFFT(band0_freqData, m_bandSignals[band]);
+			m_bandGenerator[band].processBlockWithShiftFFT(band0_freqData, m_bandSignals[band], lowestBandStartBin, highestBandEndBin);
 
 			// We have now valid first m_config.getHopSize() frames in block_output.
 			// Delay them and mix them to the output signal

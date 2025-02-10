@@ -91,14 +91,16 @@ public:
 	 * @param input Reference to input buffer of size m_blockSize
 	 * @param output Reference to output buffer of size m_blockSize
 	 */
-	void processBlockWithShift(const std::vector<float>& input, std::vector<float>& output);
+	void processBlockWithShift(const std::vector<float>& input, std::vector<float>& output,
+								const std::size_t clearStartBin, const std::size_t clearEndBin);
 
 	/**
 	 * @brief Process a block with frequency shifting using pre-computed FFT data
 	 * @param fft_data Pre-computed FFT data
 	 * @param output Reference to output buffer of size m_blockSize
 	 */
-	void processBlockWithShiftFFT(const std::vector<kiss_fft_cpx>& fft_data, std::vector<float>& output);
+	void processBlockWithShiftFFT(const std::vector<kiss_fft_cpx>& fft_data, std::vector<float>& output,
+								const std::size_t clearStartBin, const std::size_t clearEndBin);
 
 	/**
 	 * @brief Get reference to the internal frequency domain data

@@ -71,7 +71,10 @@ static snd_pcm_sframes_t bandmover_transfer(snd_pcm_extplug_t *ext,
 		if (bandmover->filled_samples >= block_size) {
 			if (bandmover->processor) {
 				std::vector<float> block_output(block_size);
-				bandmover->processor->processBlockWithShift(bandmover->processing_buffer, block_output);
+				// Low/high bins covering all the bands
+				const std::size_t lowestBandStartBin = bandmover->config->getBands()[0].m_startBin;
+				const std::size_t highestBandEndBin = bandmover->config->getBands()[bandmover->config->getNumBands() - 1].m_endBin;
+				bandmover->processor->processBlockWithShift(bandmover->processing_buffer, block_output, lowestBandStartBin, highestBandEndBin);
 
 				// Add processed samples (hop_size) to output buffer
 				if (bandmover->available_output_samples + hop_size <= bandmover->output_buffer.size()) {
