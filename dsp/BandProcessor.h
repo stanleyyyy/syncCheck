@@ -69,7 +69,7 @@ public:
 	 * @param input Reference to input buffer of size m_blockSize
 	 * @return Reference to the internal frequency domain data
 	 */
-	const std::vector<kiss_fft_cpx>& applyWindowAndFFT(const std::vector<float>& input);
+	void applyWindowAndFFT(const std::vector<float>& input, std::vector<kiss_fft_cpx>& freqData);
 
 	/**
 	 * @brief Process a block of input samples and produce an output block.
@@ -91,7 +91,7 @@ public:
 	 * @param input Reference to input buffer of size m_blockSize
 	 * @param output Reference to output buffer of size m_blockSize
 	 */
-	void processBlockWithShift(const std::vector<float>& input, std::vector<float>& output,
+	void processBlockWithShift(const std::vector<float>& input_background, const std::vector<float>& input_to_shift, std::vector<float>& output,
 								const std::size_t clearStartBin, const std::size_t clearEndBin);
 
 	/**
@@ -99,14 +99,8 @@ public:
 	 * @param fft_data Pre-computed FFT data
 	 * @param output Reference to output buffer of size m_blockSize
 	 */
-	void processBlockWithShiftFFT(const std::vector<kiss_fft_cpx>& fft_data, std::vector<float>& output,
+	void processBlockWithShiftFFT(const std::vector<kiss_fft_cpx>& fft_data_background, const std::vector<kiss_fft_cpx>& fft_data_to_shift, std::vector<float>& output,
 								const std::size_t clearStartBin, const std::size_t clearEndBin);
-
-	/**
-	 * @brief Get reference to the internal frequency domain data
-	 * @return Reference to the internal frequency domain data
-	 */
-	const std::vector<kiss_fft_cpx>& getFreqData() const { return m_freqData; }
 
 	/**
 	 * @brief Get the band isolation metric in dB.
@@ -139,7 +133,8 @@ private:
 	/**
 	 * @brief Buffer for frequency‐domain data.
 	 */
-	std::vector<kiss_fft_cpx> m_freqData;
+	std::vector<kiss_fft_cpx> m_freqData_background;
+	std::vector<kiss_fft_cpx> m_freqData_to_shift;
 
 	/**
 	 * @brief Working buffer for band-filtered data.

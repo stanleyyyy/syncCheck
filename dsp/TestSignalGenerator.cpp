@@ -133,6 +133,9 @@ void TestSignalGenerator::init(std::vector<float>& delays)
 	m_processingBuffer.resize(m_config.getBlockSize());
 	std::fill(m_processingBuffer.begin(), m_processingBuffer.end(), 0.0f);
 
+	m_backgroundBuffer.resize(m_config.getBlockSize());
+	std::fill(m_backgroundBuffer.begin(), m_backgroundBuffer.end(), 0.0f);
+
 	// Initialize band signals with zeros
 	m_bandSignals.resize(m_config.getNumBands());
 	for (std::size_t band = 0; band < m_config.getNumBands(); band++) {
@@ -210,12 +213,21 @@ bool TestSignalGenerator::renderAudioBlock(std::vector<float>& output, std::size
 
 		// Shift existing data left in processing buffer
 		std::copy(m_processingBuffer.begin() + m_config.getHopSize(), m_processingBuffer.end(), m_processingBuffer.begin());
+		std::copy(m_backgroundBuffer.begin() + m_config.getHopSize(), m_backgroundBuffer.end(), m_backgroundBuffer.begin());
 
 		// Copy new hop data to the end of processing buffer
 		std::copy(referenceData.begin(), referenceData.end(), m_processingBuffer.end() - m_config.getHopSize());
 
+		// And fill silence to background buffer (for now)
+		std::fill(m_backgroundBuffer.end() - m_config.getHopSize(), m_backgroundBuffer.end(), 0.0f);
+
+		// Get windowed FFT of background signal
+		std::vector<kiss_fft_cpx> background_freqData(m_config.getBlockSize() / 2 + 1);
+		m_bandGenerator[0].applyWindowAndFFT(m_backgroundBuffer, background_freqData);
+
 		// Get windowed FFT of processing buffer
-		const std::vector<kiss_fft_cpx> &band0_freqData = m_bandGenerator[0].applyWindowAndFFT(m_processingBuffer);
+		std::vector<kiss_fft_cpx> band0_freqData(m_config.getBlockSize() / 2 + 1);
+		m_bandGenerator[0].applyWindowAndFFT(m_processingBuffer, band0_freqData);
 
 		// Low/high bins covering all the bands
 		const std::size_t lowestBandStartBin = m_config.getBands()[0].m_startBin;
@@ -225,7 +237,7 @@ bool TestSignalGenerator::renderAudioBlock(std::vector<float>& output, std::size
 		for (std::size_t band = 0; band < m_config.getNumBands(); band++) {
 
 			// generate single band output (using FFT of processing buffer as source)
-			m_bandGenerator[band].processBlockWithShiftFFT(band0_freqData, m_bandSignals[band], lowestBandStartBin, highestBandEndBin);
+			m_bandGenerator[band].processBlockWithShiftFFT(background_freqData, band0_freqData, m_bandSignals[band], lowestBandStartBin, highestBandEndBin);
 
 			// We have now valid first m_config.getHopSize() frames in block_output.
 			// Delay them and mix them to the output signal

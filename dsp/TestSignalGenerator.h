@@ -92,6 +92,7 @@ private:
 	std::vector<SNDFILE*> m_wavFiles;
 
 	// Buffers to maintain history between calls
+	std::vector<float> m_backgroundBuffer;
 	std::vector<float> m_processingBuffer;
 	std::vector<std::vector<float>> m_bandSignals;
 

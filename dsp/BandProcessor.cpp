@@ -6,7 +6,8 @@ BandProcessor::BandProcessor(const SyncCheckConfig &config, const SyncCheckConfi
 	, m_forwardCfg(kiss_fftr_alloc(config.getBlockSize(), 0, nullptr, nullptr), free)
 	, m_inverseCfg(kiss_fftr_alloc(config.getBlockSize(), 1, nullptr, nullptr), free)
 	, m_timeData(config.getBlockSize())
-	, m_freqData(config.getBlockSize() / 2 + 1)
+	, m_freqData_background(config.getBlockSize() / 2 + 1)
+	, m_freqData_to_shift(config.getBlockSize() / 2 + 1)
 	, m_workingFreqData(config.getBlockSize() / 2 + 1)
 	, m_band(band)
 	, m_overlapBuffer(config.getOverlapSize(), 0.0f)
@@ -36,7 +37,8 @@ BandProcessor::BandProcessor(const BandProcessor &other)
 	, m_forwardCfg(kiss_fftr_alloc(other.m_config.getBlockSize(), 0, nullptr, nullptr), free)
 	, m_inverseCfg(kiss_fftr_alloc(other.m_config.getBlockSize(), 1, nullptr, nullptr), free)
 	, m_timeData(other.m_timeData)
-	, m_freqData(other.m_freqData)
+	, m_freqData_background(other.m_freqData_background)
+	, m_freqData_to_shift(other.m_freqData_to_shift)
 	, m_workingFreqData(other.m_workingFreqData)
 	, m_band(other.m_band)
 	, m_overlapBuffer(other.m_overlapBuffer)
@@ -51,7 +53,8 @@ BandProcessor::BandProcessor(BandProcessor &&other) noexcept
 	, m_forwardCfg(std::move(other.m_forwardCfg))
 	, m_inverseCfg(std::move(other.m_inverseCfg))
 	, m_timeData(std::move(other.m_timeData))
-	, m_freqData(std::move(other.m_freqData))
+	, m_freqData_background(std::move(other.m_freqData_background))
+	, m_freqData_to_shift(std::move(other.m_freqData_to_shift))
 	, m_workingFreqData(std::move(other.m_workingFreqData))
 	, m_band(other.m_band)
 	, m_overlapBuffer(std::move(other.m_overlapBuffer))
@@ -70,7 +73,8 @@ BandProcessor &BandProcessor::operator=(const BandProcessor &other)
 		m_forwardCfg.reset(kiss_fftr_alloc(other.m_config.getBlockSize(), 0, nullptr, nullptr));
 		m_inverseCfg.reset(kiss_fftr_alloc(other.m_config.getBlockSize(), 1, nullptr, nullptr));
 		m_timeData = other.m_timeData;
-		m_freqData = other.m_freqData;
+		m_freqData_background = other.m_freqData_background;
+		m_freqData_to_shift = other.m_freqData_to_shift;
 		m_workingFreqData = other.m_workingFreqData;
 		m_band = other.m_band;
 		m_overlapBuffer = other.m_overlapBuffer;
@@ -88,7 +92,8 @@ BandProcessor &BandProcessor::operator=(BandProcessor &&other) noexcept
 		m_forwardCfg = std::move(other.m_forwardCfg);
 		m_inverseCfg = std::move(other.m_inverseCfg);
 		m_timeData = std::move(other.m_timeData);
-		m_freqData = std::move(other.m_freqData);
+		m_freqData_background = std::move(other.m_freqData_background);
+		m_freqData_to_shift = std::move(other.m_freqData_to_shift);
 		m_workingFreqData = std::move(other.m_workingFreqData);
 		m_band = other.m_band;
 		m_overlapBuffer = std::move(other.m_overlapBuffer);
@@ -147,17 +152,19 @@ void BandProcessor::processBlockFFT(const std::vector<kiss_fft_cpx>& fft_data, s
 	}
 }
 
-void BandProcessor::processBlockWithShiftFFT(const std::vector<kiss_fft_cpx>& fft_data, std::vector<float>& output,
+void BandProcessor::processBlockWithShiftFFT(const std::vector<kiss_fft_cpx>& fft_data_background, const std::vector<kiss_fft_cpx>& fft_data_to_shift, std::vector<float>& output,
 										   const std::size_t clearStartBin, const std::size_t clearEndBin)
 {
+	assert(fft_data_background.size() == m_config.getBlockSize() / 2 + 1);
+	assert(fft_data_to_shift.size() == m_config.getBlockSize() / 2 + 1);
 	assert(output.size() == m_config.getBlockSize());
 
 	// Reset power measurements
 	m_inBandPower = 0.0f;
 	m_outBandPower = 0.0f;
 
-	// Copy all input FFT data first to preserve all other frequency bins
-	std::copy(fft_data.begin(), fft_data.begin() + m_config.getBlockSize() / 2 + 1, m_workingFreqData.begin());
+	// First copy full spectrum of background audio data
+	std::copy(fft_data_background.begin(), fft_data_background.begin() + m_config.getBlockSize() / 2 + 1, m_workingFreqData.begin());
 
 	// Clear the entire frequency range that could be affected by any band signal
 	for (std::size_t i = clearStartBin; i <= clearEndBin && i < m_config.getBlockSize() / 2 + 1; i++) {
@@ -171,8 +178,8 @@ void BandProcessor::processBlockWithShiftFFT(const std::vector<kiss_fft_cpx>& ff
 	for (std::size_t i = 0; i < band_width; i++) {
 		std::size_t target_bin = m_band.m_startBin + i;
 		if (target_bin < m_config.getBlockSize() / 2 + 1) {
-			m_workingFreqData[target_bin] = fft_data[i];
-			float power = fft_data[i].r * fft_data[i].r + fft_data[i].i * fft_data[i].i;
+			m_workingFreqData[target_bin] = fft_data_to_shift[i];
+			float power = fft_data_to_shift[i].r * fft_data_to_shift[i].r + fft_data_to_shift[i].i * fft_data_to_shift[i].i;
 			m_inBandPower += power;
 		}
 	}
@@ -210,9 +217,10 @@ void BandProcessor::processBlockWithShiftFFT(const std::vector<kiss_fft_cpx>& ff
 	}
 }
 
-const std::vector<kiss_fft_cpx>& BandProcessor::applyWindowAndFFT(const std::vector<float>& input)
+void BandProcessor::applyWindowAndFFT(const std::vector<float>& input, std::vector<kiss_fft_cpx>& freqData)
 {
 	assert(input.size() == m_config.getBlockSize());
+	assert(freqData.size() == m_config.getBlockSize() / 2 + 1);
 
 	// Apply window and copy input to FFT buffer
 	for (std::size_t i = 0; i < m_config.getBlockSize(); i++) {
@@ -220,8 +228,7 @@ const std::vector<kiss_fft_cpx>& BandProcessor::applyWindowAndFFT(const std::vec
 	}
 
 	// Execute forward FFT
-	kiss_fftr(m_forwardCfg.get(), m_timeData.data(), m_freqData.data());
-	return m_freqData;
+	kiss_fftr(m_forwardCfg.get(), m_timeData.data(), freqData.data());
 }
 
 void BandProcessor::processBlock(const std::vector<float>& input, std::vector<float>& output)
@@ -230,23 +237,34 @@ void BandProcessor::processBlock(const std::vector<float>& input, std::vector<fl
 	assert(output.size() == m_config.getBlockSize());
 
 	// Apply window and copy input to FFT buffer
-	applyWindowAndFFT(input);
+	applyWindowAndFFT(input, m_freqData_background);
 
 	// Process the FFT data
-	processBlockFFT(m_freqData, output);
+	processBlockFFT(m_freqData_background, output);
 }
 
-void BandProcessor::processBlockWithShift(const std::vector<float>& input, std::vector<float>& output, const std::size_t clearStartBin, const std::size_t clearEndBin)
+void BandProcessor::processBlockWithShift(const std::vector<float>& input_background, const std::vector<float>& input_to_shift, std::vector<float>& output,
+										const std::size_t clearStartBin, const std::size_t clearEndBin)
 {
-	assert(input.size() == m_config.getBlockSize());
+	assert(input_background.size() == m_config.getBlockSize());
+	assert(input_to_shift.size() == m_config.getBlockSize());
 	assert(output.size() == m_config.getBlockSize());
 
-	// Apply window and copy input to FFT buffer
-	applyWindowAndFFT(input);
+	// transform both background and signal that is about to be shifted into frequency domain
+	applyWindowAndFFT(input_background, m_freqData_background);
+
+	// if the background signal and signal for shifting are identical, we can skip the second transform
+	// and just copy FFT transform of the background signal to the target frequency data
+	if (std::equal(input_background.begin(), input_background.end(), input_to_shift.begin())) {
+		std::copy(m_freqData_background.begin(), m_freqData_background.end(), m_freqData_to_shift.begin());
+	} else {
+		// otherwise, transform the signal that is about to be shifted
+		applyWindowAndFFT(input_to_shift, m_freqData_to_shift);
+	}
 
 	// Process the FFT data with shift
 	// Only clear the range from 0 to the band width since that's where the source data comes from
-	processBlockWithShiftFFT(m_freqData, output, clearStartBin, clearEndBin);
+	processBlockWithShiftFFT(m_freqData_background, m_freqData_to_shift, output, clearStartBin, clearEndBin);
 }
 
 float BandProcessor::getBandIsolation() const
