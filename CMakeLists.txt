@@ -49,9 +49,14 @@ target_link_libraries(nsdk_syncCheck_test PUBLIC
 	nsdk_syncCheck
 )
 
+target_link_libraries(nsdk_syncCheck_test_syncGen PUBLIC
+	nsdk_syncCheck
+)
+
 # Install targets
 install(TARGETS nsdk_syncCheck DESTINATION ${CMAKE_INSTALL_LIBDIR})
 install(TARGETS asound_module_pcm_bandmover DESTINATION ${CMAKE_INSTALL_LIBDIR}/alsa-lib)
 install(TARGETS alsa_sync_check DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(TARGETS nsdk_syncCheck_test DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(TARGETS nsdk_syncCheck_test_syncGen DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(TARGETS sync_generator DESTINATION ${CMAKE_INSTALL_BINDIR})

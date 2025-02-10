@@ -9,6 +9,7 @@ set(syncCheck_HEADERS
 	dsp/SyncCheck.h
 	dsp/SyncCheckConfig.h
 	dsp/TestSignalGenerator.h
+	dsp/SyncSignalGenerator.h
 	utils/Logger.h
 )
 
@@ -18,6 +19,7 @@ set(syncCheck_SOURCES
 	dsp/SyncCheck.cpp
 	dsp/SyncCheckConfig.cpp
 	dsp/TestSignalGenerator.cpp
+	dsp/SyncSignalGenerator.cpp
 	utils/Logger.cpp
 	kissfft/kiss_fft.c
 	kissfft/kiss_fftr.c
@@ -28,6 +30,9 @@ add_library(asound_module_pcm_bandmover SHARED alsa-plugin/pcm_bandmover.cpp)
 
 # Executable for test generator / sync check
 add_executable(nsdk_syncCheck_test test/main.cpp)
+
+# Executable for the sync generator test
+add_executable(nsdk_syncCheck_test_syncGen syncGenTest/main.cpp)
 
 # Executable for the actual sync checker application
 add_executable(alsa_sync_check alsaSyncCheck.cpp)

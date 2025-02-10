@@ -22,6 +22,11 @@ TestSignalGenerator::TestSignalGenerator(const SyncCheckConfig& config)
 	for (std::size_t band = 0; band < m_config.getNumBands(); band++) {
 		m_delayLines[band] = std::make_unique<DelayLine>(100 * m_config.getSampleRate() / 1000);
 	}
+
+	// Sync signal generator via Linear Feedback Shift Register (LFSR). This generates a pseudo-random sequence of bits
+	// with a defineable starting position (or a timestamps) which guarantees that the sequence is the same for all runs.
+	// The pseudo-random sequence is generated at 16x lower rate than the sampling rate, to save CPU cycles.
+	m_syncSignalGenerator = std::make_unique<SyncSignalGenerator<float>>(m_config.getSampleRate(), m_config.getSampleRate() / 16, 24);
 }
 
 TestSignalGenerator::~TestSignalGenerator()
@@ -37,6 +42,10 @@ void TestSignalGenerator::closeWavFiles()
 		}
 	}
 	m_wavFiles.clear();
+	if (m_referenceFile) {
+		sf_close(m_referenceFile);
+		m_referenceFile = nullptr;
+	}
 	m_wavDumpEnabled = false;
 }
 
@@ -81,6 +90,15 @@ bool TestSignalGenerator::enableWavDump(bool enable, const std::string& prefix)
 		std::string filename = prefix + "_mixed.wav";
 		m_wavFiles[m_config.getNumBands()] = sf_open(filename.c_str(), SFM_WRITE, &sf_info);
 		if (!m_wavFiles[m_config.getNumBands()]) {
+			success = false;
+		}
+	}
+
+	// Open reference signal file
+	if (success) {
+		std::string filename = prefix + "_reference.wav";
+		m_referenceFile = sf_open(filename.c_str(), SFM_WRITE, &sf_info);
+		if (!m_referenceFile) {
 			success = false;
 		}
 	}
@@ -131,11 +149,22 @@ void TestSignalGenerator::init(std::vector<float>& delays)
 
 void TestSignalGenerator::generateReferenceSignal(std::vector<float>& output, std::size_t numFrames)
 {
-	// Generate new data starting after the hop
-	for (std::size_t i = 0; i < numFrames; i++) {
-		output[i] = m_dist(m_rng) * 0.2f; // Reduce noise amplitude
+	if (m_syncSignalGenerator) {
+		m_syncSignalGenerator->generateSyncStream(output, m_currentSample);
 
-		// Add a pulse every second (width: 10ms, amplitude: 1.0)
+		// scale down the amplitude to 10% of the original amplitude
+		std::for_each(output.begin(), output.end(), [](float& value) {
+			value = value * 0.1f;
+		});
+	} else {
+		// Generate new data starting after the hop
+		for (std::size_t i = 0; i < numFrames; i++) {
+			output[i] = m_dist(m_rng) * 0.2f; // Reduce noise amplitude
+		}
+	}
+
+	// Add a pulse every second (width: 10ms, amplitude: 1.0)
+	for (std::size_t i = 0; i < numFrames; i++) {
 		int sample_in_second = (m_currentSample + i) % m_config.getSampleRate();
 		if (sample_in_second < static_cast<int>(0.01f * m_config.getSampleRate())) {
 			float pulse = 0.5f * (1.0f - static_cast<float>(sample_in_second) / (0.01f * m_config.getSampleRate()));
@@ -173,6 +202,11 @@ bool TestSignalGenerator::renderAudioBlock(std::vector<float>& output, std::size
 		// Generate fresh reference signal data (for m_config.getHopSize() frames)
 		std::vector<float> referenceData(m_config.getHopSize());
 		generateReferenceSignal(referenceData, m_config.getHopSize());
+
+		// Write reference signal to WAV file if enabled
+		if (m_wavDumpEnabled && m_referenceFile) {
+			sf_writef_float(m_referenceFile, referenceData.data(), m_config.getHopSize());
+		}
 
 		// Shift existing data left in processing buffer
 		std::copy(m_processingBuffer.begin() + m_config.getHopSize(), m_processingBuffer.end(), m_processingBuffer.begin());

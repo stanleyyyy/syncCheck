@@ -3,6 +3,7 @@
 #include "SyncCheckConfig.h"
 #include "BandProcessor.h"
 #include "DelayLine.h"
+#include "SyncSignalGenerator.h"
 #include <vector>
 #include <random>
 #include <sndfile.h>
@@ -76,6 +77,7 @@ public:
 
 private:
 	SyncCheckConfig m_config;
+	std::unique_ptr<SyncSignalGenerator<float>> m_syncSignalGenerator;
 	std::vector<BandProcessor> m_bandGenerator;
 	std::vector<std::unique_ptr<DelayLine>> m_delayLines;
 	std::vector<int> m_delayFrames;
@@ -85,6 +87,8 @@ private:
 	QualityMetrics m_metrics;
 	bool m_isInitialized;
 	bool m_wavDumpEnabled;
+
+	SNDFILE *m_referenceFile;
 	std::vector<SNDFILE*> m_wavFiles;
 
 	// Buffers to maintain history between calls
