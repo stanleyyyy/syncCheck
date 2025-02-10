@@ -22,12 +22,15 @@ void SyncCheckConfig::setBands(const std::vector<SyncCheckConfig::Band>& bands)
 
 void SyncCheckConfig::initDefaultBands()
 {
-	// Calculate band boundaries
-	const std::size_t bins_per_band = (m_fftSize / 2) / m_numBands;
+	// Calculate band boundaries in upper 20% of frequency range
+	const std::size_t total_bins = m_fftSize / 2;
+	const std::size_t start_bin = total_bins * 0.8; // Start at 80% of range
+	const std::size_t usable_bins = total_bins - start_bin;
+	const std::size_t bins_per_band = usable_bins / m_numBands;
 	const std::size_t safety_gap = bins_per_band / 8;
 
 	for (std::size_t i = 0; i < m_numBands; i++) {
-		m_bands[i].m_startBin = i * bins_per_band;
-		m_bands[i].m_endBin = (i + 1) * bins_per_band - safety_gap - 1;
+		m_bands[i].m_startBin = start_bin + (i * bins_per_band);
+		m_bands[i].m_endBin = start_bin + ((i + 1) * bins_per_band) - safety_gap - 1;
 	}
 }

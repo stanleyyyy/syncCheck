@@ -133,12 +133,12 @@ void TestSignalGenerator::generateReferenceSignal(std::vector<float>& output, st
 {
 	// Generate new data starting after the hop
 	for (std::size_t i = 0; i < numFrames; i++) {
-		output[i] = m_dist(m_rng) * 0.1f; // Reduce noise amplitude
+		output[i] = m_dist(m_rng) * 0.2f; // Reduce noise amplitude
 
 		// Add a pulse every second (width: 10ms, amplitude: 1.0)
 		int sample_in_second = (m_currentSample + i) % m_config.getSampleRate();
 		if (sample_in_second < static_cast<int>(0.01f * m_config.getSampleRate())) {
-			float pulse = 1.0f * (1.0f - static_cast<float>(sample_in_second) / (0.01f * m_config.getSampleRate()));
+			float pulse = 0.5f * (1.0f - static_cast<float>(sample_in_second) / (0.01f * m_config.getSampleRate()));
 			output[i] += pulse;
 		}
 
@@ -147,7 +147,7 @@ void TestSignalGenerator::generateReferenceSignal(std::vector<float>& output, st
 		float sample_rate = m_config.getSampleRate();
 		static float phase = 0.0f;
 
-		output[i] += 0.05f * sinf(2.0f * M_PI * freq * phase);
+		output[i] += 0.02f * sinf(2.0f * M_PI * freq * phase);
 		phase += 1.0f / sample_rate;
 		if (phase >= 1.0f) {
 			phase -= 1.0f;
