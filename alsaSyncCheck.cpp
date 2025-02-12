@@ -5,6 +5,7 @@
 #include <fstream>
 #include <iomanip>
 #include <chrono>
+#include <sndfile.h>
 
 #include "nsdkStacktrace.h"
 #include "SyncCheck.h"
@@ -213,7 +214,95 @@ std::pair<bool, AppConfig> parseCommandLine(int argc, char *argv[])
 	return { true, config };
 }
 
-class AlsaCapture
+class AudioSource {
+public:
+	virtual ~AudioSource() = default;
+	virtual bool isInitialized() const = 0;
+	virtual std::vector<float> captureBlock() = 0;
+};
+
+class FileCapture : public AudioSource {
+private:
+	AppConfig m_config;
+	SNDFILE* m_file;
+	SF_INFO m_sfInfo;
+	std::vector<float> m_buffer;
+	bool m_initialized;
+
+public:
+	FileCapture(const AppConfig& config)
+		: m_config(config)
+		, m_file(nullptr)
+		, m_initialized(false)
+	{
+		std::string filepath = config.alsaDevice.substr(7); // Remove "file://" prefix
+
+		memset(&m_sfInfo, 0, sizeof(m_sfInfo));
+		m_file = sf_open(filepath.c_str(), SFM_READ, &m_sfInfo);
+
+		if (!m_file) {
+			DBG_ERROR("Cannot open audio file: " << filepath << " (" << sf_strerror(nullptr) << ")");
+			return;
+		}
+
+		// Override config parameters with file properties
+		m_config.channels = m_sfInfo.channels;
+		m_config.sampleRate = m_sfInfo.samplerate;
+
+		if (m_config.processChannel >= m_config.channels) {
+			DBG_ERROR("Requested channel " << m_config.processChannel << " exceeds number of channels in file (" << m_config.channels << ")");
+			sf_close(m_file);
+			return;
+		}
+
+		m_buffer.resize(m_config.periodSize * m_config.channels);
+		m_initialized = true;
+
+		DBG_INFO("Opened audio file: " << filepath);
+		DBG_INFO("Sample rate: " << m_sfInfo.samplerate << " Hz");
+		DBG_INFO("Channels: " << m_sfInfo.channels);
+		DBG_INFO("Format: 0x" << std::hex << m_sfInfo.format << std::dec);
+	}
+
+	~FileCapture() {
+		if (m_file) {
+			sf_close(m_file);
+		}
+	}
+
+	bool isInitialized() const override {
+		return m_initialized;
+	}
+
+	std::vector<float> captureBlock() override {
+		std::vector<float> output(m_config.periodSize);
+
+		if (!isInitialized()) {
+			return output;
+		}
+
+		sf_count_t framesRead = sf_readf_float(m_file, m_buffer.data(), m_config.periodSize);
+
+		if (framesRead == 0) {
+			g_running = false; // End of file
+			return output;
+		}
+
+		// Extract the requested channel
+		for (sf_count_t i = 0; i < framesRead; ++i) {
+			output[i] = m_buffer[i * m_config.channels + m_config.processChannel];
+		}
+
+		// Zero-pad if we read less than requested
+		if (framesRead < m_config.periodSize) {
+			std::fill(output.begin() + framesRead, output.end(), 0.0f);
+		}
+
+		return output;
+	}
+};
+
+class AlsaCapture : public AudioSource
 {
 private:
 	AppConfig m_config;
@@ -288,12 +377,12 @@ public:
 		}
 	}
 
-	bool isInitialized() const
+	bool isInitialized() const override
 	{
 		return m_handle != nullptr && m_frameSize > 0;
 	}
 
-	std::vector<float> captureBlock()
+	std::vector<float> captureBlock() override
 	{
 		std::vector<float> floatBuffer(m_config.periodSize);
 
@@ -374,10 +463,16 @@ int main(int argc, char *argv[])
 
 	FFTSyncCheck syncChecker(syncConfig);
 
-	// Initialize ALSA capture
-	AlsaCapture capture(config);
-	if (!capture.isInitialized()) {
-		DBG_ERROR("Failed to initialize ALSA capture");
+	// Initialize appropriate capture source
+	std::unique_ptr<AudioSource> capture;
+	if (config.alsaDevice.substr(0, 7) == "file://") {
+		capture = std::make_unique<FileCapture>(config);
+	} else {
+		capture = std::make_unique<AlsaCapture>(config);
+	}
+
+	if (!capture->isInitialized()) {
+		DBG_ERROR("Failed to initialize audio capture");
 		return 1;
 	}
 
@@ -397,7 +492,7 @@ int main(int argc, char *argv[])
 	const float STATS_UPDATE_INTERVAL = 1.0f; // Update stats every second
 
 	while (g_running) {
-		std::vector<float> block = capture.captureBlock();
+		std::vector<float> block = capture->captureBlock();
 		syncChecker.processSampleBlock(block);
 
 		statsUpdateTime += float(config.periodSize) / config.sampleRate;
