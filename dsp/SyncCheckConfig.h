@@ -1,6 +1,7 @@
 #pragma once
 
 #include <vector>
+#include <cmath>
 
 /**
  * @brief Configuration class for FFTSyncCheck system
@@ -14,8 +15,63 @@ public:
 	 */
 	struct Band
 	{
-		std::size_t m_startBin; ///< Starting FFT bin index.
-		std::size_t m_endBin;	///< Ending FFT bin index.
+		double m_startFreq;  // Start frequency in Hz
+		double m_endFreq;    // End frequency in Hz
+
+		/**
+		 * @brief Convert frequency to bin
+		 * @param freq Frequency in Hz
+		 * @param fftSize FFT size
+		 * @param sampleRate Sample rate
+		 * @return Bin index
+		 */
+		std::size_t freqToBin(double freq, std::size_t fftSize, std::size_t sampleRate) const
+		{
+			// Ensure frequency doesn't exceed Nyquist frequency
+			double nyquist = sampleRate / 2.0;
+			double clampedFreq = std::min(freq, nyquist);
+			return std::round(clampedFreq * fftSize / sampleRate);
+		}
+
+		/**
+		 * @brief Get start bin index
+		 * @param fftSize FFT size
+		 * @param sampleRate Sample rate
+		 * @return Bin index
+		 */
+		std::size_t getStartBin(std::size_t fftSize, std::size_t sampleRate) const
+		{
+			return freqToBin(m_startFreq, fftSize, sampleRate);
+		}
+
+		/**
+		 * @brief Get end bin index
+		 * @param fftSize FFT size
+		 * @param sampleRate Sample rate
+		 * @return Bin index
+		 */
+		std::size_t getEndBin(std::size_t fftSize, std::size_t sampleRate) const
+		{
+			return freqToBin(m_endFreq, fftSize, sampleRate);
+		}
+
+		/**
+		 * @brief Get start frequency
+		 * @return Start frequency
+		 */
+		double getStartFreq() const
+		{
+			return m_startFreq;
+		}
+
+		/**
+		 * @brief Get end frequency
+		 * @return End frequency
+		 */
+		double getEndFreq() const
+		{
+			return m_endFreq;
+		}
 	};
 
 	/**
@@ -55,6 +111,14 @@ public:
 	SyncCheckConfig(std::size_t fft_size = DEFAULT_BLOCK_SIZE, std::size_t overlap = DEFAULT_OVERLAP_PERCENT,
 					std::size_t sample_rate = DEFAULT_SAMPLE_RATE,
 					std::size_t num_bands = DEFAULT_NUM_BANDS, std::size_t interp_factor = DEFAULT_INTERP_FACTOR);
+
+	/**
+	 * @brief Initialize bands with custom start frequency, frequency range, and band separation
+	 * @param start_freq Starting frequency of the first band in Hz
+	 * @param freq_range Total frequency range to cover for all bands in Hz
+	 * @param band_sep Separation between consecutive bands in Hz
+	 */
+	void initBands(const double start_freq, const double freq_range, const double band_sep);
 
 	/**
 	 * @brief Get the block size. Also equal to the FFT size.

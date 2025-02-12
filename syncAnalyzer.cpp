@@ -24,7 +24,11 @@ static volatile bool g_running = true;
 
 struct AppConfig
 {
+#ifdef BUILDTYPE_PC
+	std::string alsaDevice = "file://test_signal_mixed.wav_mixed.wav";
+#else
 	std::string alsaDevice = "default";
+#endif
 	unsigned int sampleRate = 48000;
 	snd_pcm_format_t format = SND_PCM_FORMAT_S16_LE;
 	std::string outputFile;
@@ -219,6 +223,7 @@ public:
 	virtual ~AudioSource() = default;
 	virtual bool isInitialized() const = 0;
 	virtual std::vector<float> captureBlock() = 0;
+	virtual unsigned int getSampleRate() const = 0;
 };
 
 class FileCapture : public AudioSource {
@@ -300,6 +305,11 @@ public:
 
 		return output;
 	}
+
+	unsigned int getSampleRate() const override
+	{
+		return m_sfInfo.samplerate;
+	}
 };
 
 class AlsaCapture : public AudioSource
@@ -350,6 +360,9 @@ public:
 			DBG_ERROR("Cannot set sample rate: " << std::string(snd_strerror(err)));
 			return;
 		}
+
+		// keep actual sample rate
+		m_config.sampleRate = rate;
 
 		if ((err = snd_pcm_hw_params_set_period_size(m_handle, hw_params, config.periodSize, 0)) < 0) {
 			DBG_ERROR("Cannot set period size: " << std::string(snd_strerror(err)));
@@ -432,6 +445,11 @@ public:
 
 		return floatBuffer;
 	}
+
+	unsigned int getSampleRate() const override
+	{
+		return m_config.sampleRate;
+	}
 };
 
 int main(int argc, char *argv[])
@@ -457,12 +475,6 @@ int main(int argc, char *argv[])
 	signal(SIGINT, signalHandler);
 	signal(SIGTERM, signalHandler);
 
-	// Initialize FFTSyncCheck with custom parameters
-	SyncCheckConfig syncConfig(config.blockSize, config.overlapPercent, config.sampleRate,
-							 config.numBands, config.interpFactor);
-
-	FFTSyncCheck syncChecker(syncConfig);
-
 	// Initialize appropriate capture source
 	std::unique_ptr<AudioSource> capture;
 	if (config.alsaDevice.substr(0, 7) == "file://") {
@@ -475,6 +487,13 @@ int main(int argc, char *argv[])
 		DBG_ERROR("Failed to initialize audio capture");
 		return 1;
 	}
+
+	// make sure we use the actual sampling rate from the capture device
+	config.sampleRate = capture->getSampleRate();
+
+	// Initialize FFTSyncCheck with custom parameters
+	SyncCheckConfig syncConfig(config.blockSize, config.overlapPercent, config.sampleRate,
+							 config.numBands, config.interpFactor);
 
 	// Initialize visualizer
 	DelayStatsVisualizer visualizer(config.outputFile, config.useColors);
@@ -491,8 +510,12 @@ int main(int argc, char *argv[])
 	float statsUpdateTime = 0.0f;
 	const float STATS_UPDATE_INTERVAL = 1.0f; // Update stats every second
 
+	FFTSyncCheck syncChecker(syncConfig);
+
 	while (g_running) {
 		std::vector<float> block = capture->captureBlock();
+
+		// Dump captured block to file for verification using libsndfile
 		syncChecker.processSampleBlock(block);
 
 		statsUpdateTime += float(config.periodSize) / config.sampleRate;

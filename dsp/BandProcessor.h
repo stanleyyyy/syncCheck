@@ -88,19 +88,25 @@ public:
 
 	/**
 	 * @brief Process a block of samples with frequency shifting
-	 * @param input Reference to input buffer of size m_blockSize
-	 * @param output Reference to output buffer of size m_blockSize
+	 * @param input_background Reference to background input buffer
+	 * @param input_to_shift Reference to input buffer to shift
+	 * @param output Reference to output buffer
+	 * @param clearBand Band to clear
 	 */
-	void processBlockWithShift(const std::vector<float>& input_background, const std::vector<float>& input_to_shift, std::vector<float>& output,
-								const std::size_t clearStartBin, const std::size_t clearEndBin);
+	void processBlockWithShift(const std::vector<float>& input_background, const std::vector<float>& input_to_shift,
+							 std::vector<float>& output, const SyncCheckConfig::Band &clearBand);
 
 	/**
 	 * @brief Process a block with frequency shifting using pre-computed FFT data
-	 * @param fft_data Pre-computed FFT data
-	 * @param output Reference to output buffer of size m_blockSize
+	 * @param fft_data_background Pre-computed background FFT data
+	 * @param fft_data_to_shift Pre-computed FFT data to shift
+	 * @param output Reference to output buffer
+	 * @param clearBand Band to clear
 	 */
-	void processBlockWithShiftFFT(const std::vector<kiss_fft_cpx>& fft_data_background, const std::vector<kiss_fft_cpx>& fft_data_to_shift, std::vector<float>& output,
-								const std::size_t clearStartBin, const std::size_t clearEndBin);
+	void processBlockWithShiftFFT(const std::vector<kiss_fft_cpx>& fft_data_background,
+								const std::vector<kiss_fft_cpx>& fft_data_to_shift,
+								std::vector<float>& output,
+								const SyncCheckConfig::Band &clearBand);
 
 	/**
 	 * @brief Get the band isolation metric in dB.

@@ -27,8 +27,8 @@ void FFTSyncCheck::extractBand(const std::vector<kiss_fft_cpx>& input, std::vect
 {
 	std::fill(output.begin(), output.end(), kiss_fft_cpx{0.0f, 0.0f});
 	if (band_idx < m_config.getNumBands()) {
-		int start = m_bands[band_idx].m_startBin;
-		int end = m_bands[band_idx].m_endBin;
+		int start = m_bands[band_idx].getStartBin(m_config.getBlockSize(), m_config.getSampleRate());
+		int end = m_bands[band_idx].getEndBin(m_config.getBlockSize(), m_config.getSampleRate());
 		for (int i = start; i <= end; i++) {
 			output[i] = input[i];
 		}
@@ -50,19 +50,23 @@ float FFTSyncCheck::calculateBandDelayFFT(const std::vector<kiss_fft_cpx>& fft_d
 		m_paddedFreqData[i].i = fft_data[i].i * m_config.getInterpFactor();
 	}
 
-	// Determine band shift and width (in original frequency bins).
-	std::size_t band_shift = m_bands[band2].m_startBin - m_bands[band1].m_startBin;
-	std::size_t band_width = m_bands[band1].m_endBin - m_bands[band1].m_startBin + 1;
+	// Determine band shift and width
+	const double band_shift_Hz = m_bands[band2].m_startFreq - m_bands[band1].m_startFreq;
+	const double band_width_Hz = m_bands[band1].m_endFreq - m_bands[band1].m_startFreq + 1;
+
+	// Convert to bins
+	const std::size_t band_shift = band_shift_Hz * m_config.getBlockSize() / m_config.getSampleRate();
+	const std::size_t band_width = band_width_Hz * m_config.getBlockSize() / m_config.getSampleRate();
 
 	// Zero out the padded correlation buffer.
 	std::fill(m_paddedCorrData.begin(), m_paddedCorrData.end(), kiss_fft_cpx{0.0f, 0.0f});
 
 	// Compute the normalized cross-correlation product over the band.
 	for (std::size_t i = 0; i < band_width; i++) {
-		std::size_t bin1 = m_bands[band1].m_startBin + i;
+		std::size_t bin1 = m_bands[band1].getStartBin(m_config.getBlockSize(), m_config.getSampleRate()) + i;
 		std::size_t bin2 = bin1 + band_shift;
 
-		if (bin2 <= m_bands[band2].m_endBin &&
+		if (bin2 <= m_bands[band2].getEndBin(m_config.getBlockSize(), m_config.getSampleRate()) &&
 			bin1 < orig_freq_size && bin2 < orig_freq_size) {
 
 			// Use the padded frequency data instead of the original fft_data.
@@ -217,8 +221,8 @@ void FFTSyncCheck::printDelayStats(const std::vector<float>& expected_delays_ms)
 
 	DBG_INFO("Band Details:");
 	for (std::size_t i = 1; i < m_config.getNumBands(); i++) {
-		float f_start = m_bands[i].m_startBin * static_cast<float>(m_config.getSampleRate()) / m_config.getBlockSize();
-		float f_end = m_bands[i].m_endBin * static_cast<float>(m_config.getSampleRate()) / m_config.getBlockSize();
+		float f_start = m_bands[i].getStartFreq();
+		float f_end = m_bands[i].getEndFreq();
 
 		DBG_INFO("Band " << i
 			<< ": "

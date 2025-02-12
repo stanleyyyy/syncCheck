@@ -71,10 +71,12 @@ static snd_pcm_sframes_t bandmover_transfer(snd_pcm_extplug_t *ext,
 		if (bandmover->filled_samples >= block_size) {
 			if (bandmover->processor) {
 				std::vector<float> block_output(block_size);
-				// Low/high bins covering all the bands
-				const std::size_t lowestBandStartBin = bandmover->config->getBands()[0].m_startBin;
-				const std::size_t highestBandEndBin = bandmover->config->getBands()[bandmover->config->getNumBands() - 1].m_endBin;
-				bandmover->processor->processBlockWithShift(bandmover->processing_buffer, bandmover->processing_buffer, block_output, lowestBandStartBin, highestBandEndBin);
+				// Low/high frequencies covering all the bands
+				const SyncCheckConfig::Band clearBand = {
+					bandmover->config->getBands()[0].getStartFreq(),
+					bandmover->config->getBands()[bandmover->config->getNumBands() - 1].getEndFreq()
+				};
+				bandmover->processor->processBlockWithShift(bandmover->processing_buffer, bandmover->processing_buffer, block_output, clearBand);
 
 				// Add processed samples (hop_size) to output buffer
 				if (bandmover->available_output_samples + hop_size <= bandmover->output_buffer.size()) {
@@ -172,7 +174,7 @@ static void bandmover_dump(snd_pcm_extplug_t *ext, snd_output_t *out)
 	snd_output_printf(out, "  sample rate  : %zu\n", bandmover->config->getSampleRate());
 	if (bandmover->target_band < bandmover->config->getNumBands()) {
 		const auto& band = bandmover->config->getBands()[bandmover->target_band];
-		snd_output_printf(out, "  band range   : %lu - %lu\n", band.m_startBin, band.m_endBin);
+		snd_output_printf(out, "  band range   : %f Hz - %f Hz\n", band.getStartFreq(), band.getEndFreq());
 	}
 	snd_pcm_dump_setup(bandmover->ext.pcm, out);
 }

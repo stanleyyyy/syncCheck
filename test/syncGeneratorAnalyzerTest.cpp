@@ -7,7 +7,7 @@ int main()
 	// Set desired log level
 	Logger::getInstance().setLogLevel(LOG_DEBUG);
 
-	// Create default configuration
+	// Initialize configuration
 	SyncCheckConfig config;
 
 	// Create sync checker with config
