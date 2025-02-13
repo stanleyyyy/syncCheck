@@ -163,7 +163,9 @@ float FFTSyncCheck::calculateBandDelayFFT(const std::vector<kiss_fft_cpx>& fft_d
 		} else {
 			delay = max_idx / (static_cast<float>(m_config.getSampleRate()) * m_config.getInterpFactor());
 		}
-		DBG_INFO("Delay " << band1 << "-" << band2 << ": " << delay * 1000.0f << " ms");
+		// convert to ms
+		delay *= 1000.0f;
+		DBG_INFO("Delay " << band1 << "-" << band2 << ": " << delay << " ms");
 	}
 
 	if (band2 == m_config.getNumBands() - 1) {
@@ -188,6 +190,8 @@ float FFTSyncCheck::calculateBandDelayFFT(const std::vector<kiss_fft_cpx>& fft_d
 		delay = interpolated_idx / (static_cast<float>(m_config.getSampleRate()) * m_config.getInterpFactor());
 	}
 
+	// convert to ms
+	delay *= 1000.0f;
 	return delay;
 }
 
@@ -198,7 +202,7 @@ void FFTSyncCheck::printDelayStats(const std::vector<float>& expected_delays_ms)
 	DBG_INFO("-----+--------------+------------+-----------+-----------+-------------");
 
 	for (std::size_t i = 1; i < m_config.getNumBands(); i++) {
-		float delay_ms = m_delayStats[i].m_filteredDelay * 1000.0f;
+		float delay_ms = m_delayStats[i].m_filteredDelay;
 		float conf = m_delayStats[i].m_confidence;
 		const char *status = "OK          ";
 		if (conf < 0.5f)
