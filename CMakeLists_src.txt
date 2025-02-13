@@ -10,6 +10,9 @@ set(syncCheck_HEADERS
 	dsp/SyncCheckConfig.h
 	dsp/TestSignalGenerator.h
 	dsp/SyncSignalGenerator.h
+	dsp/STFTProcessor.h
+	dsp/STFTWindowGenerator.h
+	dsp/KissFFTWrapper.h
 	utils/Logger.h
 )
 
@@ -20,6 +23,8 @@ set(syncCheck_SOURCES
 	dsp/SyncCheckConfig.cpp
 	dsp/TestSignalGenerator.cpp
 	dsp/SyncSignalGenerator.cpp
+	dsp/STFTProcessor.cpp
+	dsp/KissFFTWrapper.cpp
 	utils/Logger.cpp
 	kissfft/kiss_fft.c
 	kissfft/kiss_fftr.c

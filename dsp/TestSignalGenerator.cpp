@@ -5,17 +5,21 @@
 #include <assert.h>
 #include <iomanip>
 
-TestSignalGenerator::TestSignalGenerator(const SyncCheckConfig& config)
+TestSignalGenerator::TestSignalGenerator(const SyncCheckConfig &config)
 	: m_config(config)
 	, m_dist(-0.5f, 0.5f)
 	, m_currentSample(0)
 	, m_isInitialized(false)
 	, m_wavDumpEnabled(false)
+	, m_referenceFile(nullptr)
+	, m_processingBufferFilled(0)
+	, m_processingBuffer(config.getBlockSize())
 {
 	std::random_device rd;
 	m_rng.seed(rd());
 
 	m_delayFrames.resize(m_config.getNumBands());
+	m_bandOutputs.resize(m_config.getNumBands());
 
 	// create delay lines for 100ms of delay in both directions
 	m_delayLines.resize(m_config.getNumBands());
@@ -36,7 +40,7 @@ TestSignalGenerator::~TestSignalGenerator()
 
 void TestSignalGenerator::closeWavFiles()
 {
-	for (SNDFILE* file : m_wavFiles) {
+	for (SNDFILE *file : m_wavFiles) {
 		if (file) {
 			sf_close(file);
 		}
@@ -49,7 +53,7 @@ void TestSignalGenerator::closeWavFiles()
 	m_wavDumpEnabled = false;
 }
 
-bool TestSignalGenerator::enableWavDump(bool enable, const std::string& prefix)
+bool TestSignalGenerator::enableWavDump(bool enable, const std::string &prefix)
 {
 	// If already in desired state, do nothing
 	if (enable == m_wavDumpEnabled) {
@@ -112,7 +116,7 @@ bool TestSignalGenerator::enableWavDump(bool enable, const std::string& prefix)
 	return true;
 }
 
-void TestSignalGenerator::init(std::vector<float>& delays)
+void TestSignalGenerator::init(std::vector<float> &delays)
 {
 	if (delays.size() != m_config.getNumBands()) {
 		throw std::runtime_error("Delays array must match number of bands");
@@ -127,39 +131,24 @@ void TestSignalGenerator::init(std::vector<float>& delays)
 
 	m_currentSample = 0;
 	m_isInitialized = true;
-	m_metrics = QualityMetrics{};
-
-	// Initialize processing buffer with zeros
-	m_processingBuffer.resize(m_config.getBlockSize());
-	std::fill(m_processingBuffer.begin(), m_processingBuffer.end(), 0.0f);
-
-	m_backgroundBuffer.resize(m_config.getBlockSize());
-	std::fill(m_backgroundBuffer.begin(), m_backgroundBuffer.end(), 0.0f);
-
-	// Initialize band signals with zeros
-	m_bandSignals.resize(m_config.getNumBands());
-	for (std::size_t band = 0; band < m_config.getNumBands(); band++) {
-		m_bandSignals[band].resize(m_config.getBlockSize());
-		std::fill(m_bandSignals[band].begin(), m_bandSignals[band].end(), 0.0f);
-	}
+	m_metrics = QualityMetrics {};
 
 	// Create band processors
-	m_bandGenerator.clear();
+	m_bandProcessors.clear();
 	for (std::size_t band = 0; band < m_config.getNumBands(); band++) {
-		m_bandGenerator.emplace_back(m_config, m_config.getBands()[band]);
+		m_bandProcessors.emplace_back(m_config, m_config.getBands()[band]);
 	}
 }
 
-void TestSignalGenerator::generateReferenceSignal(std::vector<float>& output, std::size_t numFrames)
+void TestSignalGenerator::generateReferenceSignal(std::vector<float> &output, std::size_t numFrames)
 {
 	if (m_syncSignalGenerator) {
 		m_syncSignalGenerator->generateSyncStream(output, m_currentSample);
 
 		// scale down the amplitude to 10% of the original amplitude
-		std::for_each(output.begin(), output.end(), [](float& value) {
-			value = value * 0.1f;
-		});
-	} else {
+		std::for_each(output.begin(), output.end(), [](float &value) { value = value * 0.1f; });
+	}
+	else {
 		// Generate new data starting after the hop
 		for (std::size_t i = 0; i < numFrames; i++) {
 			output[i] = m_dist(m_rng) * 0.2f; // Reduce noise amplitude
@@ -189,122 +178,96 @@ void TestSignalGenerator::generateReferenceSignal(std::vector<float>& output, st
 	m_currentSample += numFrames;
 }
 
-bool TestSignalGenerator::renderAudioBlock(std::vector<float>& output, std::size_t numFrames)
+void TestSignalGenerator::renderAudioBlock(std::vector<float> &output)
 {
-	assert(output.size() == m_config.getBlockSize());
-
-	if (!m_isInitialized) {
-		throw std::runtime_error("Block generation not initialized. Call initBlockGeneration first.");
+	// make sure all work buffers are the same size as the block size
+	if (m_processingBuffer.size() != m_config.getBlockSize()) {
+		m_processingBuffer.resize(m_config.getBlockSize());
 	}
 
-	std::fill(output.begin(), output.end(), 0.0f);
+	if (m_referenceBuffer.size() != m_config.getBlockSize()) {
+		m_referenceBuffer.resize(m_config.getBlockSize());
+	}
 
-	// Process the signal
-	for (std::size_t offset = 0; offset < numFrames; offset += m_config.getHopSize()) {
+	if (m_backgroundBuffer.size() != m_config.getBlockSize()) {
+		m_backgroundBuffer.resize(m_config.getBlockSize());
+	}
 
-		// Generate fresh reference signal data (for m_config.getHopSize() frames)
-		std::vector<float> referenceData(m_config.getHopSize());
-		generateReferenceSignal(referenceData, m_config.getHopSize());
+	std::size_t processed = 0;
 
-		// Write reference signal to WAV file if enabled
-		if (m_wavDumpEnabled && m_referenceFile) {
-			sf_writef_float(m_referenceFile, referenceData.data(), m_config.getHopSize());
-		}
+	while (processed < output.size()) {
 
-		// Shift existing data left in processing buffer
-		std::copy(m_processingBuffer.begin() + m_config.getHopSize(), m_processingBuffer.end(), m_processingBuffer.begin());
-		std::copy(m_backgroundBuffer.begin() + m_config.getHopSize(), m_backgroundBuffer.end(), m_backgroundBuffer.begin());
+		// How many samples from processing buffer can we copy to output?
+		size_t samplesToProcess = std::min(output.size() - processed, m_processingBufferFilled);
+		std::copy(m_processingBuffer.begin(), m_processingBuffer.begin() + samplesToProcess, output.begin() + processed);
 
-		// Copy new hop data to the end of processing buffer
-		std::copy(referenceData.begin(), referenceData.end(), m_processingBuffer.end() - m_config.getHopSize());
+		// consume 'samplesToProcess' worth of samples from the buffer
+		std::copy(m_processingBuffer.begin() + samplesToProcess, m_processingBuffer.begin() + m_processingBufferFilled, m_processingBuffer.begin());
+		m_processingBufferFilled -= samplesToProcess;
+		processed += samplesToProcess;
 
-		// And fill silence to background buffer (for now)
-		std::fill(m_backgroundBuffer.end() - m_config.getHopSize(), m_backgroundBuffer.end(), 0.0f);
+		// Generate new hopSize worth of reference signal only if we consumed everything from m_processingBuffer
+		if (m_processingBufferFilled == 0) {
+			std::vector<float> referenceData(m_config.getHopSize());
+			generateReferenceSignal(referenceData, m_config.getHopSize());
 
-		// Get windowed FFT of background signal
-		std::vector<kiss_fft_cpx> background_freqData(m_config.getBlockSize() / 2 + 1);
-		m_bandGenerator[0].applyWindowAndFFT(m_backgroundBuffer, background_freqData);
-
-		// Get windowed FFT of processing buffer
-		std::vector<kiss_fft_cpx> band0_freqData(m_config.getBlockSize() / 2 + 1);
-		m_bandGenerator[0].applyWindowAndFFT(m_processingBuffer, band0_freqData);
-
-		// Low/high frequencies covering all the bands
-		const SyncCheckConfig::Band clearBand = {
-			m_config.getBands()[0].getStartFreq(),
-			m_config.getBands()[m_config.getNumBands() - 1].getEndFreq()
-		};
-
-		// Process each band with full block size
-		for (std::size_t band = 0; band < m_config.getNumBands(); band++) {
-
-			// generate single band output (using FFT of processing buffer as source)
-			m_bandGenerator[band].processBlockWithShiftFFT(background_freqData, band0_freqData, m_bandSignals[band], clearBand);
-
-			// We have now valid first m_config.getHopSize() frames in block_output.
-			// Delay them and mix them to the output signal
-			m_delayLines[band]->processBlock(m_bandSignals[band], m_bandSignals[band], m_config.getHopSize(), m_delayFrames[band]);
-
-			// Write band signal to WAV file if enabled
-			if (m_wavDumpEnabled && m_wavFiles[band]) {
-				sf_writef_float(m_wavFiles[band], m_bandSignals[band].data(), m_config.getHopSize());
+			// Optionally, write the reference signal to WAV.
+			if (m_wavDumpEnabled && m_referenceFile) {
+				sf_writef_float(m_referenceFile, referenceData.data(), m_config.getHopSize());
 			}
 
-			// Mix the band signal into the output signal
-			for (std::size_t i = 0; i < m_config.getHopSize(); i++) {
-				output[offset + i] += m_bandSignals[band][i] / m_config.getNumBands();
+			// Shift the existing buffers left by hopSize.
+			std::copy(m_backgroundBuffer.begin() + m_config.getHopSize(), m_backgroundBuffer.end(), m_backgroundBuffer.begin());
+			std::copy(m_referenceBuffer.begin() + m_config.getHopSize(), m_referenceBuffer.end(), m_referenceBuffer.begin());
+
+			// Append the new hop to the processingBuffer and update backgroundBuffer.
+			std::copy(referenceData.begin(), referenceData.end(), m_referenceBuffer.end() - m_config.getHopSize());
+			std::fill(m_backgroundBuffer.end() - m_config.getHopSize(), m_backgroundBuffer.end(), 0.0f);
+
+			// Compute FFT of the full processing and background buffers.
+			std::vector<kiss_fft_cpx> backgroundFreq;
+			m_bandProcessors[0].applyWindowAndFFT(m_backgroundBuffer, backgroundFreq);
+
+			std::vector<kiss_fft_cpx> referenceFreq;
+			m_bandProcessors[0].applyWindowAndFFT(m_referenceBuffer, referenceFreq);
+
+			// Define clearBand covering all bands.
+			const SyncCheckConfig::Band clearBand = { m_config.getBands()[0].getStartFreq(), m_config.getBands()[m_config.getNumBands() - 1].getEndFreq() };
+
+			// Generate each band of test signal by shifting the FFT data of the reference signal
+			for (std::size_t band = 0; band < m_config.getNumBands(); band++) {
+				m_bandProcessors[band].processBlockWithShiftFFT(backgroundFreq, referenceFreq, m_bandOutputs[band], clearBand);
 			}
-		}
 
-		// Write mixed signal to WAV file if enabled
-		if (m_wavDumpEnabled && m_wavFiles[m_config.getNumBands()]) {
-			sf_writef_float(m_wavFiles[m_config.getNumBands()], &output[offset], m_config.getHopSize());
-		}
-	}
-
-	// Update quality metrics
-	float total_isolation = 0.0f;
-	for (std::size_t band = 0; band < m_config.getNumBands(); band++) {
-		total_isolation += m_bandGenerator[band].getBandIsolation();
-	}
-	m_metrics.m_bandIsolation = total_isolation / m_config.getNumBands();
-
-	float signal_power = 0.0f;
-	float noise_power = 1e-10f;
-	for (std::size_t band = 0; band < m_config.getNumBands(); band++) {
-		for (std::size_t i = 0; i < m_config.getHopSize(); i++) {
-			signal_power += m_bandSignals[band][i] * m_bandSignals[band][i];
-		}
-	}
-	m_metrics.m_snr = 10.0f * log10f(signal_power / noise_power);
-
-	float total_coherence = 0.0f;
-	for (std::size_t band = 0; band < m_config.getNumBands() - 1; band++) {
-		float max_correlation = 0.0f;
-		std::size_t start_idx = numFrames / 4;
-		std::size_t end_idx = 3 * numFrames / 4;
-		for (int lag = -50; lag <= 50; lag++) {
-			float correlation = 0.0f;
-			std::size_t count = 0;
-			for (std::size_t i = start_idx; i < end_idx; i++) {
-				int j = i + lag;
-				if (j >= 0 && j < (int)numFrames) {
-					correlation += m_bandSignals[band][i] * m_bandSignals[band + 1][j];
-					count++;
+			// Process delay lines and optionally write each band's hop to WAV.
+			for (std::size_t band = 0; band < m_config.getNumBands(); band++) {
+				m_delayLines[band]->processBlock(m_bandOutputs[band], m_bandOutputs[band], m_config.getHopSize(), m_delayFrames[band]);
+				if (m_wavDumpEnabled && m_wavFiles[band]) {
+					sf_writef_float(m_wavFiles[band], m_bandOutputs[band].data(), m_config.getHopSize());
 				}
 			}
-			if (count > 0) {
-				correlation /= count;
-				max_correlation = std::max(max_correlation, fabsf(correlation));
+
+			// Mix the bands for the current hop.
+			for (std::size_t i = 0; i < m_config.getHopSize(); i++) {
+				float mix = 0.0f;
+				for (std::size_t band = 0; band < m_config.getNumBands(); band++) {
+					mix += m_bandOutputs[band][i];
+				}
+				m_processingBuffer[i] = mix / static_cast<float>(m_config.getNumBands());
+			}
+
+			// we have now a full hop's worth of data in m_processingBuffer
+			m_processingBufferFilled = m_config.getHopSize();
+
+			// Optionally, write the mixed hop to WAV.
+			if (m_wavDumpEnabled && m_wavFiles[m_config.getNumBands()]) {
+				sf_writef_float(m_wavFiles[m_config.getNumBands()], &m_processingBuffer[0], m_config.getHopSize());
 			}
 		}
-		total_coherence += max_correlation;
 	}
-	m_metrics.m_phaseCoherence = total_coherence / (m_config.getNumBands() - 1);
-	return true;
 }
 
-std::vector<float> TestSignalGenerator::renderTestSignal(float duration, std::vector<float>& delays_ms, bool verbose)
+std::vector<float> TestSignalGenerator::renderTestSignal(float duration, std::vector<float> &delays_ms, bool verbose)
 {
 	// Initialize block generation
 	init(delays_ms);
@@ -336,7 +299,7 @@ std::vector<float> TestSignalGenerator::renderTestSignal(float duration, std::ve
 
 		std::size_t block_size = std::min((int)m_config.getBlockSize(), (int)(numFrames - offset));
 		std::vector<float> block(block_size);
-		renderAudioBlock(block, block_size);
+		renderAudioBlock(block);
 		std::copy(block.begin(), block.end(), mixed_signal.begin() + offset);
 		offset += block_size;
 	}

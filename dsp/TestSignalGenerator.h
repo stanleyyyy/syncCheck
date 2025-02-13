@@ -55,10 +55,8 @@ public:
 	/**
 	 * @brief Generate one block of test signal
 	 * @param output Buffer to fill with the next block of samples
-	 * @param numFrames Number of frames to generate
-	 * @return True if more blocks are available, false if generation is complete
 	 */
-	bool renderAudioBlock(std::vector<float>& output, std::size_t numFrames);
+	void renderAudioBlock(std::vector<float>& output);
 
 	/**
 	 * @brief Generate a complete test signal with specified delays for each band
@@ -76,9 +74,22 @@ public:
 	const QualityMetrics& getQualityMetrics() const { return m_metrics; }
 
 private:
+	/**
+	 * @brief Generate reference signal for the given number of frames
+	 * @param output Buffer to fill with reference signal
+	 * @param numFrames Number of frames to generate
+	 */
+	void generateReferenceSignal(std::vector<float>& output, std::size_t numFrames);
+
+	/**
+	 * @brief Close all open WAV files
+	 */
+	void closeWavFiles();
+
+private:
 	SyncCheckConfig m_config;
 	std::unique_ptr<SyncSignalGenerator<float>> m_syncSignalGenerator;
-	std::vector<BandProcessor> m_bandGenerator;
+	std::vector<BandProcessor> m_bandProcessors;
 	std::vector<std::unique_ptr<DelayLine>> m_delayLines;
 	std::vector<int> m_delayFrames;
 	std::mt19937 m_rng;
@@ -93,18 +104,9 @@ private:
 
 	// Buffers to maintain history between calls
 	std::vector<float> m_backgroundBuffer;
+	std::vector<float> m_referenceBuffer;
+	std::vector<std::vector<float>> m_bandOutputs;
+
+	std::size_t m_processingBufferFilled;
 	std::vector<float> m_processingBuffer;
-	std::vector<std::vector<float>> m_bandSignals;
-
-	/**
-	 * @brief Generate reference signal for the given number of frames
-	 * @param output Buffer to fill with reference signal
-	 * @param numFrames Number of frames to generate
-	 */
-	void generateReferenceSignal(std::vector<float>& output, std::size_t numFrames);
-
-	/**
-	 * @brief Close all open WAV files
-	 */
-	void closeWavFiles();
 };

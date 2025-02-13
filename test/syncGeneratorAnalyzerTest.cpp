@@ -8,7 +8,8 @@ int main()
 	Logger::getInstance().setLogLevel(LOG_DEBUG);
 
 	// Initialize configuration
-	SyncCheckConfig config;
+	SyncCheckConfig config(8192, 50, 44100, 8, 1);
+	config.initBands(18000, 4000, 100);
 
 	// Create sync checker with config
 	FFTSyncCheck syncChecker(config);

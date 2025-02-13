@@ -12,7 +12,7 @@ static volatile bool g_running = true;
 struct AppConfig
 {
 	float duration = 5.0f;
-	std::string outputPrefix = "test_signal";
+	std::string outputPrefix = "test_signal_mixed.wav";
 	bool verbose = true;
 	unsigned int sampleRate = 48000;
 	unsigned int blockSize = SyncCheckConfig::DEFAULT_BLOCK_SIZE;
@@ -168,9 +168,16 @@ int main(int argc, char *argv[])
 	signal(SIGINT, signalHandler);
 	signal(SIGTERM, signalHandler);
 
+
+	config.blockSize = 8192;
+	config.overlapPercent = 50;
+	config.numBands = 8;
+	config.interpFactor = 1;
+
 	// Initialize configuration
 	SyncCheckConfig syncConfig(config.blockSize, config.overlapPercent, config.sampleRate,
 							 config.numBands, config.interpFactor);
+	syncConfig.initBands(18000, 4000, 100);
 
 	DBG_INFO("Generating test signal with parameters:");
 	DBG_INFO("Duration: " << config.duration << "s");
@@ -202,10 +209,7 @@ int main(int argc, char *argv[])
 		size_t framesToProcess = std::min(config.blockSize, static_cast<unsigned int>(remainingFrames));
 
 		// Generate block
-		if (!testSignalGenerator.renderAudioBlock(block, config.blockSize)) {
-			DBG_ERROR("Error generating audio block");
-			break;
-		}
+		testSignalGenerator.renderAudioBlock(block);
 
 		// Update progress
 		framesProcessed += framesToProcess;

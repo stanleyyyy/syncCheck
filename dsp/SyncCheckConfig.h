@@ -82,7 +82,7 @@ public:
 	/**
 	 * @brief Interpolation factor for delay calculations.
 	 */
-	static constexpr int DEFAULT_INTERP_FACTOR = 1;
+	static constexpr int DEFAULT_INTERP_FACTOR = 4;
 
 	/**
 	 * @brief Sampling rate of the signal.

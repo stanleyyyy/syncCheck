@@ -1,8 +1,11 @@
 #pragma once
 
-#include "BandProcessor.h"
+#include "KissFFTWrapper.h"
+#include "STFTWindowGenerator.h"
 #include "SyncCheckConfig.h"
-#include <cstdlib> // for free
+#include "DelayStats.h"
+#include <vector>
+#include <memory>
 
 /**
  * @brief FFTSyncCheck performs FFT-based synchronization checks across multiple frequency bands.
@@ -74,10 +77,10 @@ public:
 	float getFilteredDelay(std::size_t band);
 
 	/**
-	 * @brief Get the delay estimates for all frequency bands.
-	 * @return Vector of delay estimates in seconds.
+	 * @brief Get all delay statistics
+	 * @return Vector of pairs containing filtered delay and confidence for each band
 	 */
-	std::vector<float> getDelayEstimates() const;
+	std::vector<std::pair<float, float>> getDelayStats() const;
 
 	/**
 	 * @brief Get the sample rate.
@@ -101,127 +104,21 @@ private:
 	 * @brief Vector holding frequency band definitions.
 	 */
 	std::vector<SyncCheckConfig::Band> m_bands;
-
-	/**
-	 * @brief Structure for tracking delay measurements and statistics.
-	 */
-	struct DelayStats
-	{
-		static const int HISTORY_SIZE = 10; ///< Number of measurements to keep.
-		std::vector<float> m_history;		///< History of delay measurements.
-		float m_filteredDelay;				///< Filtered (median) delay.
-		float m_confidence;					///< Confidence metric based on variance.
-
-		DelayStats()
-			: m_filteredDelay(0.0f)
-			, m_confidence(0.0f)
-		{
-			m_history.reserve(HISTORY_SIZE);
-		}
-
-		/**
-		 * @brief Update delay statistics with a new measurement.
-		 *
-		 * @param new_delay New delay measurement in seconds.
-		 */
-		void update(float new_delay)
-		{
-			if (m_history.size() >= HISTORY_SIZE) {
-				m_history.erase(m_history.begin());
-			}
-			m_history.push_back(new_delay);
-
-			// by default use median
-			std::vector<float> sorted = m_history;
-			std::sort(sorted.begin(), sorted.end());
-			m_filteredDelay = sorted[sorted.size() / 2];
-
-			// Use Median Absolute Deviation (MAD) to handle outliers
-			if (m_history.size() == HISTORY_SIZE) {
-
-				// Calculate median
-				std::vector<float> sorted = m_history;
-				std::sort(sorted.begin(), sorted.end());
-				float median = sorted[sorted.size() / 2];
-
-				// Calculate absolute deviations from median
-				std::vector<float> deviations;
-				deviations.reserve(HISTORY_SIZE);
-				for (float val : m_history) {
-					deviations.push_back(fabsf(val - median));
-				}
-
-				// Calculate MAD (median of absolute deviations)
-				std::sort(deviations.begin(), deviations.end());
-				float mad = deviations[deviations.size() / 2];
-
-				// For a normal distribution, MAD_SCALE = 1.4826 converts MAD to standard deviation
-				// OUTLIER_THRESHOLD = 3.0 is the common "3-sigma rule" - data within 3 std devs
-				const float MAD_SCALE = 1.4826f;     // 1/Φ^(-1)(3/4) where Φ is normal CDF
-				const float OUTLIER_THRESHOLD = 3.0f; // Points >3σ from median considered outliers
-				float scaled_mad = mad * MAD_SCALE;   // Convert MAD to equivalent std deviation
-				std::vector<float> inliers;
-
-				for (float val : m_history) {
-					if (fabsf(val - median) <= OUTLIER_THRESHOLD * scaled_mad) {
-						inliers.push_back(val);
-					}
-				}
-
-				// Use median of inliers as filtered delay
-				if (!inliers.empty()) {
-					std::sort(inliers.begin(), inliers.end());
-					m_filteredDelay = inliers[inliers.size() / 2];
-				}
-			}
-
-			// Calculate confidence based on variance.
-			float sum = 0.0f;
-			for (float d : m_history) {
-				float diff = d - m_filteredDelay;
-				sum += diff * diff;
-			}
-			float variance = sum / m_history.size();
-			m_confidence = 1.0f / (1.0f + sqrtf(variance));
-		}
-	};
-
 	/**
 	 * @brief Vector containing delay statistics for each frequency band.
 	 */
 	std::vector<DelayStats> m_delayStats;
 
-	/**
-	 * @brief Kiss FFT configuration for forward (real-to-complex) analysis.
-	 */
-	std::unique_ptr<kiss_fftr_state, kiss_fftr_deleter> m_analysisForwardCfg;
+	// FFT processors
+	std::unique_ptr<KissFFTWrapper> m_fftProcessor;
+	std::unique_ptr<KissFFTWrapper> m_paddedFftProcessor;
+	std::unique_ptr<STFTWindowGenerator> m_windowGenerator;
 
-	/**
-	 * @brief Kiss FFT configuration for inverse (complex-to-real) analysis.
-	 */
-	std::unique_ptr<kiss_fftr_state, kiss_fftr_deleter> m_analysisInverseCfg;
-
-	/**
-	 * @brief Buffer for time-domain data used in analysis.
-	 */
-	std::vector<float> m_analysisTimeData;
-
-	/**
-	 * @brief Buffer for frequency-domain data used in analysis.
-	 */
-	std::vector<kiss_fft_cpx> m_analysisFreqData;
-
-	/**
-	 * @brief Buffer for storing frequency-domain cross-correlation data.
-	 */
+	// Working buffers
+	std::size_t m_processingBufferFilled;
+	std::vector<float> m_processingBuffer;
+	std::vector<float> m_windowedBuffer;
 	std::vector<kiss_fft_cpx> m_correlationData;
-
-	/**
-	 * @brief Padded FFT configurations for delay calculations
-	 */
-	std::unique_ptr<kiss_fftr_state, kiss_fftr_deleter> m_paddedForwardCfg;
-	std::unique_ptr<kiss_fftr_state, kiss_fftr_deleter> m_paddedInverseCfg;
+	std::vector<kiss_fft_cpx> m_correlationDataPadded;
 	std::vector<float> m_paddedTimeData;
-	std::vector<kiss_fft_cpx> m_paddedCorrData;
-	std::vector<kiss_fft_cpx> m_paddedFreqData;
 };
