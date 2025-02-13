@@ -8,9 +8,6 @@ BandProcessor::BandProcessor(const SyncCheckConfig &config, const SyncCheckConfi
 	, m_workingFreqData(config.getBlockSize() / 2 + 1)
 	, m_inBandPower(0.0)
 	, m_outBandPower(0.0)
-	, m_prevPhase(config.getBlockSize() / 2 + 1, 0.0f)
-	, m_accPhase(config.getBlockSize() / 2 + 1, 0.0f)
-	, m_hasPrevFrame(false)
 {
 }
 
@@ -21,9 +18,6 @@ BandProcessor::BandProcessor(const BandProcessor &other)
 	, m_workingFreqData(other.m_workingFreqData)
 	, m_inBandPower(other.m_inBandPower)
 	, m_outBandPower(other.m_outBandPower)
-	, m_prevPhase(other.m_prevPhase)
-	, m_accPhase(other.m_accPhase)
-	, m_hasPrevFrame(other.m_hasPrevFrame)
 {
 }
 
@@ -34,9 +28,6 @@ BandProcessor::BandProcessor(BandProcessor &&other) noexcept
 	, m_workingFreqData(std::move(other.m_workingFreqData))
 	, m_inBandPower(other.m_inBandPower)
 	, m_outBandPower(other.m_outBandPower)
-	, m_prevPhase(std::move(other.m_prevPhase))
-	, m_accPhase(std::move(other.m_accPhase))
-	, m_hasPrevFrame(other.m_hasPrevFrame)
 {
 }
 
@@ -51,9 +42,6 @@ BandProcessor &BandProcessor::operator=(const BandProcessor &other)
 		m_workingFreqData = other.m_workingFreqData;
 		m_inBandPower = other.m_inBandPower;
 		m_outBandPower = other.m_outBandPower;
-		m_prevPhase = other.m_prevPhase;
-		m_accPhase = other.m_accPhase;
-		m_hasPrevFrame = other.m_hasPrevFrame;
 	}
 	return *this;
 }
@@ -67,9 +55,6 @@ BandProcessor &BandProcessor::operator=(BandProcessor &&other) noexcept
 		m_workingFreqData = std::move(other.m_workingFreqData);
 		m_inBandPower = other.m_inBandPower;
 		m_outBandPower = other.m_outBandPower;
-		m_prevPhase = std::move(other.m_prevPhase);
-		m_accPhase = std::move(other.m_accPhase);
-		m_hasPrevFrame = other.m_hasPrevFrame;
 	}
 	return *this;
 }
@@ -175,77 +160,39 @@ void BandProcessor::processBlockWithShiftFFT(
 		m_workingFreqData[i] = kiss_fft_cpx{0.0f, 0.0f};
 	}
 
-	// Precompute phase vocoder parameters to avoid redundant floating-point operations
-	const float twoPi   = 2.0f * static_cast<float>(M_PI);
-	const float N       = static_cast<float>(m_config.getBlockSize());
-	const float hop     = static_cast<float>(m_config.getHopSize());
-	const float binFreq = twoPi / N; // radians per bin
+	// Compute the exact frequency shift in radians/sample
+	double sampleRate       = static_cast<double>(m_config.getSampleRate());
+	double blockSize        = static_cast<double>(m_config.getBlockSize());
 
-	// Compute exact bin shift based on real frequency
-	double bandStartFreq = m_band.getStartFreq();
-	double bandEndFreq   = m_band.getEndFreq();
-	double desiredCenterFreq = 0.5 * (bandStartFreq + bandEndFreq);
+	// **Correct Phase Calculation: Use Frequency-Dependent Phase Offsets**
+	for (std::size_t i = 0; i <= bandEndBin - bandStartBin && i < fft_data_to_shift.size(); i++) {
+		std::size_t srcBin = i; // Source band starts at 0 Hz
+		std::size_t dstBin = bandStartBin + i; // Shifted band starts at m_band.getStartFreq()
 
-	double sourceCenterBin  = 0.5 * (bandStartBin + bandEndBin);  // Integer bin approximation of the source center
-	double sourceCenterFreq = sourceCenterBin * (static_cast<double>(m_config.getSampleRate()) / m_config.getBlockSize());
-	double deltaF           = desiredCenterFreq - sourceCenterFreq;
-	double binSpacingHz     = static_cast<double>(m_config.getSampleRate()) / m_config.getBlockSize();
-	double alpha            = deltaF / binSpacingHz; // Fractional bin shift
-
-	// **Use integer iteration to speed up processing**
-	std::size_t bandWidth = bandEndBin - bandStartBin + 1;
-	for (std::size_t i = 0; i < bandWidth; i++) {
-		std::size_t srcBin = bandStartBin + i;
-		std::size_t dstBin = static_cast<std::size_t>(srcBin + alpha);  // Apply integer bin shift
-
-		// Ensure target bin is within valid range
+		// Ensure the shifted bin stays within the FFT size limits
 		if (dstBin >= m_workingFreqData.size()) {
 			continue;
 		}
 
+		// Compute phase offset for this bin based on its frequency
+		double binFrequency = (static_cast<double>(srcBin) * sampleRate) / blockSize;
+		double phaseOffset  = binFrequency * (2.0 * M_PI / sampleRate) * m_config.getBlockSize();
+
+		// Compute cosine/sine components for IQ modulation
+		double cosPhase = cos(phaseOffset);
+		double sinPhase = sin(phaseOffset);
+
 		// Extract magnitude and phase from input FFT
-		float re = fft_data_to_shift[i].r;
-		float im = fft_data_to_shift[i].i;
-		float mag = std::sqrt(re * re + im * im);
-		float inputPhase = std::atan2(im, re);
+		float re = fft_data_to_shift[srcBin].r;
+		float im = fft_data_to_shift[srcBin].i;
 
-		// Initialize accumulated phase on first frame
-		if (!m_hasPrevFrame) {
-			m_accPhase[srcBin] = inputPhase;
-			m_prevPhase[srcBin] = inputPhase;
-		}
+		// Apply IQ modulation with correct phase offset
+		m_workingFreqData[dstBin].r = re * cosPhase - im * sinPhase;
+		m_workingFreqData[dstBin].i = re * sinPhase + im * cosPhase;
 
-		// Compute phase difference and unwrap (fast version using integer math)
-		float phaseDiff = inputPhase - m_prevPhase[srcBin];
-		while (phaseDiff > static_cast<float>(M_PI)) phaseDiff -= twoPi;
-		while (phaseDiff < -static_cast<float>(M_PI)) phaseDiff += twoPi;
-
-		// Compute expected and deviation phase advance
-		float omega = binFreq * static_cast<float>(srcBin);
-		float expectedAdvance = omega * hop;
-		float phaseDeviation = phaseDiff - expectedAdvance;
-
-		// Accumulate new phase
-		m_accPhase[srcBin] += expectedAdvance + phaseDeviation;
-
-		// Apply frequency shift offset (alpha bins)
-		float shiftOffset = static_cast<float>(alpha) * binFreq * hop;
-		m_accPhase[srcBin] += shiftOffset;
-
-		// Store updated phase & magnitude into target FFT bin
-		float outPhase = m_accPhase[srcBin];
-		m_workingFreqData[dstBin].r = mag * std::cos(outPhase);
-		m_workingFreqData[dstBin].i = mag * std::sin(outPhase);
-
-		// Save current input phase as previous
-		m_prevPhase[srcBin] = inputPhase;
-
-		// Update band power
-		m_inBandPower += (mag * mag);
+		// Accumulate power within the band
+		m_inBandPower += (re * re + im * im);
 	}
-
-	// Mark that we now have a “previous frame”
-	m_hasPrevFrame = true;
 
 	// Accumulate power outside the band
 	for (std::size_t i = 0; i < m_workingFreqData.size(); i++) {

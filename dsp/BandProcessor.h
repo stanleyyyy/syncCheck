@@ -130,10 +130,5 @@ private:
 	 * @brief Accumulated power outside the band.
 	 */
 	double m_outBandPower;
-
-	// Phase vocoder state for each bin of the band we’re shifting.
-	std::vector<float> m_prevPhase;  // Previous input phase
-	std::vector<float> m_accPhase;   // Accumulated output phase
-	bool m_hasPrevFrame = false;     // True after we process the first frame
 };
 
