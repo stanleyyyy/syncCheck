@@ -5,6 +5,7 @@
 #include <fstream>
 #include <iomanip>
 #include <chrono>
+#include <set>
 #include <sndfile.h>
 
 #include "nsdkStacktrace.h"
@@ -48,6 +49,7 @@ struct AppConfig
 	int processChannel = -1;
 	std::string dumpFile;
 	float statsRefreshRate = 1.0f;  // Stats refresh rate in seconds
+	std::set<int> bandsOfInterest;  // Bands to include in reports (empty = all bands)
 };
 
 void signalHandler(int signum)
@@ -76,7 +78,7 @@ public:
 		}
 	}
 
-	void visualizeDelays(const std::vector<std::pair<float, float>> &estimates)
+	void visualizeDelays(const std::vector<std::pair<float, float>> &estimates, const std::set<int> &bandsOfInterest)
 	{
 		std::stringstream ss;
 		ss << std::fixed << std::setprecision(3);
@@ -100,24 +102,26 @@ public:
 			}
 
 			// Numeric display
-			ss << (m_useColors ? color : "") << "Band " << (i + 1) << ": "
-			   << std::setw(8) << delay << "ms [" << confidence << "]"
-			   << (m_useColors ? ANSI_COLOR_RESET : "") << " |";
+			if (bandsOfInterest.empty() || bandsOfInterest.find(i) != bandsOfInterest.end()) {
+				ss << (m_useColors ? color : "") << "Band " << (i + 1) << ": "
+				<< std::setw(8) << delay << " ms [" << confidence << "]"
+				<< (m_useColors ? ANSI_COLOR_RESET : "") << " |";
 
-			// ASCII visualization
-			int position = center + static_cast<int>((delay / m_maxDelay) * (center - 1));
-			position = std::max(0, std::min(static_cast<int>(m_width - 1), position));
+				// ASCII visualization
+				int position = center + static_cast<int>((delay / m_maxDelay) * (center - 1));
+				position = std::max(0, std::min(static_cast<int>(m_width - 1), position));
 
-			for (unsigned int j = 0; j < m_width; ++j) {
-				if (j == position) {
-					ss << (m_useColors ? color : "") << "*" << (m_useColors ? ANSI_COLOR_RESET : "");
-				} else if (j == center) {
-					ss << "|";  // Center mark
-				} else {
-					ss << "-";
+				for (unsigned int j = 0; j < m_width; ++j) {
+					if (j == position) {
+						ss << (m_useColors ? color : "") << "*" << (m_useColors ? ANSI_COLOR_RESET : "");
+					} else if (j == center) {
+						ss << "|";  // Center mark
+					} else {
+						ss << "-";
+					}
 				}
+				ss << "|\n";
 			}
-			ss << "|\n";
 		}
 		ss << "\nScale: each division = " << (m_maxDelay / (center - 1)) << " ms\n\n";
 
@@ -126,14 +130,19 @@ public:
 
 		// Output to file if opened
 		if (m_outputFile.is_open()) {
-			m_outputFile << m_dumpId++ << ",";
+			m_outputFile << std::setw(6) << std::setfill(' ') << m_dumpId++ << ", ";
 			for (size_t i = 0; i < estimates.size(); ++i) {
-				const double delay = estimates[i].first;
-				const double confidence = estimates[i].second;
 
-				m_outputFile << delay << " [" << confidence << "] ";
-				if (i < estimates.size() - 1)
-					m_outputFile << ",";
+				if (bandsOfInterest.empty() || bandsOfInterest.find(i) != bandsOfInterest.end()) {
+					const double delay = estimates[i].first;
+					const double confidence = estimates[i].second;
+
+					m_outputFile << "Band " << std::setw(1) << (i + 1) << ": "
+						<< std::fixed << std::setprecision(3) << std::setw(8) << delay
+						<< " ms, confidence: " << std::setw(5) << confidence << "";
+					if (i < estimates.size() - 1)
+						m_outputFile << ",";
+				}
 			}
 			m_outputFile << std::endl;
 		}
@@ -159,6 +168,7 @@ void printUsage(const char *programName)
 			  << "      --start-freq=NUM   Start frequency in Hz (default: 18000)\n"
 			  << "      --freq-range=NUM   Frequency range in Hz (default: 4000)\n"
 			  << "      --band-sep=NUM     Band separation in Hz (default: 100)\n"
+			  << "      --bands-of-interest=LIST  Comma-separated list of band indices to report (default: all)\n"
 			  << "      --refresh-rate=NUM Statistics refresh rate in seconds (default: 1.0)\n"
 			  << "      --dump=FILE        Dump captured audio to WAV file\n"
 			  << "  -h, --help            Show this help message\n";
@@ -196,6 +206,7 @@ std::pair<bool, AppConfig> parseCommandLine(int argc, char *argv[])
 		{ "freq-range", required_argument, 0, 7 },
 		{ "band-sep", required_argument, 0, 8 },
 		{ "refresh-rate", required_argument, 0, 9 },
+		{ "bands-of-interest", required_argument, 0, 10 },
 		{ "help", no_argument, 0, 'h' },
 		{ 0, 0, 0, 0 }
 	};
@@ -264,6 +275,21 @@ std::pair<bool, AppConfig> parseCommandLine(int argc, char *argv[])
 			if (config.statsRefreshRate <= 0.0f) {
 				DBG_ERROR("Invalid refresh rate. Must be greater than 0");
 				return { false, config };
+			}
+			break;
+		case 10: // bands-of-interest
+			{
+				std::string bands_str(optarg);
+				std::stringstream ss(bands_str);
+				std::string band;
+				while (std::getline(ss, band, ',')) {
+					int band_idx = std::stoi(band);
+					if (band_idx < 1) {
+						DBG_ERROR("Invalid band index " << band_idx << ". Must be in range from 1 to " << config.numBands);
+						return { false, config };
+					}
+					config.bandsOfInterest.insert(band_idx - 1);
+				}
 			}
 			break;
 		case 'h':
@@ -662,6 +688,13 @@ int main(int argc, char *argv[])
 	DBG_INFO("Frequency range: " << config.freqRange);
 	DBG_INFO("Band separation: " << config.bandSep);
 
+	std::string bands;
+	for (int band_idx : config.bandsOfInterest) {
+		if (!bands.empty()) bands += ", ";
+		bands += "Band " + std::to_string(band_idx);
+	}
+	DBG_INFO("Bands of interest: " << bands);
+
 	unsigned int bandId = 1;
 	for (const auto& band : syncConfig.getBands()) {
 		DBG_INFO("Band " << bandId++ << ": " << band.getStartFreq() << " Hz - " << band.getEndFreq() << " Hz");
@@ -726,7 +759,7 @@ int main(int argc, char *argv[])
 			statsUpdateTime += float(hopSize) / config.sampleRate;
 			if (statsUpdateTime >= config.statsRefreshRate) {
 				std::vector<std::pair<float, float>> estimates = syncChecker.getDelayStats();
-				visualizer.visualizeDelays(estimates);
+				visualizer.visualizeDelays(estimates, config.bandsOfInterest);
 				statsUpdateTime = 0.0f;
 			}
 		}
