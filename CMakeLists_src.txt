@@ -44,3 +44,6 @@ add_executable(nsdk_sync_generator_analyzer_test test/syncGeneratorAnalyzerTest.
 
 # Executable for the sync generator test
 add_executable(nsdk_sync_generator_test test/syncGeneratorTest.cpp)
+
+# Executable for the sync generator window test
+add_executable(nsdk_sync_generator_window_test test/syncGeneratorWindowTest.cpp)
