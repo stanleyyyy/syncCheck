@@ -5,6 +5,12 @@
 #include "STFTWindowGenerator.h"
 #include "KissFFTWrapper.h"
 
+/**
+ * Class to perform a streaming STFT (short-time Fourier transform).
+ * This is a streaming version of the FFT.
+ * It is used to convert a time-domain signal into a frequency-domain signal and back.
+ * It uses a Hann window to reduce spectral leakage between consecutive frames.
+ */
 class STFTProcessor
 {
 public:

@@ -17,27 +17,17 @@ public:
 	 *
 	 * @param windowLength Length of the analysis window.
 	 * @param overlap Overlap between consecutive analysis windows.
-	 *
-	 * If the parameters are invalid (overlap >= windowLength), the generator is marked as invalid.
 	 */
 	STFTWindowGenerator(int windowLength, int overlap)
 	{
-		if (overlap >= windowLength) {
-			m_valid = false;
-			return;
-		}
+		ASSERT_WITH_ERROR(overlap < windowLength, "Overlap must be less than window length.");
+		ASSERT_WITH_ERROR(overlap * 2 != windowLength && overlap * 3 / 4 != windowLength, "Overlap must be 2 or 3/4 of window length.");
+
 		m_windowLength = windowLength;
 		m_overlap = overlap;
 		m_hopSize = m_windowLength - m_overlap;
 		generateWindows();
 	}
-
-	/**
-	 * @brief Returns true if the window generator parameters are valid.
-	 *
-	 * @return True if valid, false otherwise.
-	 */
-	bool isValid() const { return m_valid; }
 
 	/**
 	 * @brief Returns the computed analysis window.
@@ -111,7 +101,6 @@ private:
 	int m_windowLength;
 	int m_overlap;
 	int m_hopSize;
-	bool m_valid = true;
 	std::vector<double> m_analysisWindow;
 	std::vector<double> m_synthesisWindow;
 };
