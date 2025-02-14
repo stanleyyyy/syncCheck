@@ -9,6 +9,12 @@
 #define M_PI 3.14159265358979323846
 #endif
 
+enum class WindowType
+{
+	HANN,
+	SINE
+};
+
 class STFTWindowGenerator
 {
 public:
@@ -17,8 +23,9 @@ public:
 	 *
 	 * @param windowLength Length of the analysis window.
 	 * @param overlap Overlap between consecutive analysis windows.
+	 * @param type The type of window to use (HANN or SINE).
 	 */
-	STFTWindowGenerator(int windowLength, int overlap)
+	STFTWindowGenerator(int windowLength, int overlap, WindowType type = WindowType::HANN)
 	{
 		ASSERT_WITH_ERROR(overlap < windowLength, "Overlap must be less than window length.");
 		ASSERT_WITH_ERROR(overlap == windowLength/2 || overlap == (3*windowLength)/4, "Overlap must be 50% or 75% of window length.");
@@ -26,7 +33,7 @@ public:
 		m_windowLength = windowLength;
 		m_overlap = overlap;
 		m_hopSize = m_windowLength - m_overlap;
-
+		m_type = type;
 		generateWindows();
 	}
 
@@ -57,38 +64,58 @@ public:
 
 private:
 	/**
-	 * @brief Generates the analysis and synthesis windows.
+	 * @brief Generates the analysis and synthesis windows based on the selected window type.
 	 */
 	void generateWindows()
 	{
-		// Standard Hann (analysis) window
-		m_analysisWindow.resize(m_windowLength);
-		for (int n = 0; n < m_windowLength; n++) {
-			m_analysisWindow[n] = 0.5 * (1.0 - std::cos(2.0 * M_PI * n / (m_windowLength - 1)));
-		}
-
-		// Sum-of-squares denominators for each residue class mod hopSize
-		std::vector<double> denoms(m_hopSize, 0.0);
-		for (int n = 0; n < m_windowLength; n++) {
-			int r = n % m_hopSize;
-			denoms[r] += m_analysisWindow[n] * m_analysisWindow[n];
-		}
-
-		// Synthesis window: analysisWindow[n] / denoms[r]
-		m_synthesisWindow.resize(m_windowLength);
-		for (int n = 0; n < m_windowLength; n++) {
-			int r = n % m_hopSize;
-			if (denoms[r] > 1e-12) {
-				m_synthesisWindow[n] = m_analysisWindow[n] / denoms[r];
-			} else {
-				m_synthesisWindow[n] = 0.0;
+		if(m_type == WindowType::SINE)
+		{
+			// Generate sine window.
+			m_analysisWindow.resize(m_windowLength);
+			for (int n = 0; n < m_windowLength; n++) {
+				m_analysisWindow[n] = std::sin(M_PI * (n + 0.5) / m_windowLength);
 			}
+			// For sine window, analysis and synthesis windows are identical.
+			m_synthesisWindow = m_analysisWindow;
+		}
+		else // Default to Hann window.
+		{
+			// Generate standard Hann analysis window.
+			m_analysisWindow.resize(m_windowLength);
+			for (int n = 0; n < m_windowLength; n++) {
+				m_analysisWindow[n] = 0.5 * (1.0 - std::cos(2.0 * M_PI * n / (m_windowLength - 1)));
+			}
+
+			// Compute sum-of-squares denominators for each residue class mod hopSize.
+			std::vector<double> denoms(m_hopSize, 0.0);
+			for (int n = 0; n < m_windowLength; n++) {
+				int r = n % m_hopSize;
+				denoms[r] += m_analysisWindow[n] * m_analysisWindow[n];
+			}
+
+			// Synthesis window: analysisWindow[n] / denoms[r]
+			m_synthesisWindow.resize(m_windowLength);
+			for (int n = 0; n < m_windowLength; n++) {
+				int r = n % m_hopSize;
+				if (denoms[r] > 1e-12) {
+					m_synthesisWindow[n] = m_analysisWindow[n] / denoms[r];
+				} else {
+					m_synthesisWindow[n] = 0.0;
+				}
+			}
+		}
+
+		// Compensate gain loss of the synthesis window.
+		const float boost = static_cast<float>(m_windowLength) / static_cast<float>(m_hopSize);
+		for (int n = 0; n < m_windowLength; n++) {
+			m_synthesisWindow[n] *= boost;
 		}
 	}
 
 	int m_windowLength;
 	int m_overlap;
 	int m_hopSize;
+	WindowType m_type;
 	std::vector<double> m_analysisWindow;
 	std::vector<double> m_synthesisWindow;
 };
