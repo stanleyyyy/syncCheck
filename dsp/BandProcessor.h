@@ -65,6 +65,14 @@ public:
 	void processBlock(const std::vector<float>& input, std::vector<float>& output);
 
 	/**
+	 * @brief Process a block of FFT data and produce an output block.
+	 *
+	 * @param fft_data Reference to FFT data.
+	 * @param output Reference to output samples.
+	 */
+	void processBlockFFT(const std::vector<kiss_fft_cpx> &fft_data, std::vector<float>& output);
+
+	/**
 	 * @brief Process a block of samples with frequency shifting
 	 * @param input_background Reference to background input buffer
 	 * @param input_to_shift Reference to input buffer to shift
@@ -99,6 +107,13 @@ public:
 								const std::vector<kiss_fft_cpx>& fft_data_to_shift,
 								std::vector<float>& output,
 								const SyncCheckConfig::Band& clearBand);
+
+	/**
+	 * @brief Inverse STFT via built-in STFT processor.
+	 * @param frames Input frames.
+	 * @param output Output buffer.
+	 */
+	void inverse(const std::vector<std::vector<kiss_fft_cpx>>& frames, std::vector<float>& output);
 
 private:
 	/**

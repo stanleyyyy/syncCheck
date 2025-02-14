@@ -72,9 +72,18 @@ void BandProcessor::processBlock(const std::vector<float>& input, std::vector<fl
 
 	// Get frequency domain data
 	auto& fft_data = frames[0];
+	processBlockFFT(fft_data, output);
+}
+
+void BandProcessor::processBlockFFT(const std::vector<kiss_fft_cpx> &fft_data, std::vector<float>& output)
+{
+	output.resize(m_config.getBlockSize());
+	ASSERT_WITH_ERROR(output.size() == m_config.getBlockSize(), "Output block size must match the configured block size.");
 
 	std::size_t bandStartBin = m_band.getStartBin(m_config.getBlockSize(), m_config.getSampleRate());
 	std::size_t bandEndBin = m_band.getEndBin(m_config.getBlockSize(), m_config.getSampleRate());
+
+	std::copy(fft_data.begin(), fft_data.end(), m_workingFreqData.begin());
 
 	// Band-pass filter and measure power
 	m_inBandPower = 0.0f;
@@ -88,13 +97,17 @@ void BandProcessor::processBlock(const std::vector<float>& input, std::vector<fl
 		}
 		else {
 			m_outBandPower += power;
-			fft_data[i].r = 0.0f;
-			fft_data[i].i = 0.0f;
+			m_workingFreqData[i].r = 0.0f;
+			m_workingFreqData[i].i = 0.0f;
 		}
 	}
 
+	// Create frames for inverse STFT
+	std::vector<std::vector<kiss_fft_cpx>> frames;
+	frames.push_back(m_workingFreqData);
+
 	// Perform inverse STFT
-	output = m_stftProcessor->inverse(frames);
+	m_stftProcessor->inverse(frames, output);
 }
 
 void BandProcessor::processBlockWithShift(const std::vector<float>& input_background,
@@ -132,7 +145,7 @@ void BandProcessor::applyWindowAndFFT(const std::vector<float>& input, std::vect
 	}
 
 	// Copy the FFT data to the output
-	output.resize(m_config.getBlockSize() / 2 + 1);
+	output.resize(frames[0].size());
 	std::copy(frames[0].begin(), frames[0].end(), output.begin());
 }
 
@@ -207,6 +220,10 @@ void BandProcessor::processBlockWithShiftFFT(
 	frames.push_back(m_workingFreqData);
 
 	// Perform inverse STFT
-	auto result = m_stftProcessor->inverse(frames);
-	std::copy(result.begin(), result.end(), output.begin());
+	m_stftProcessor->inverse(frames, output);
+}
+
+void BandProcessor::inverse(const std::vector<std::vector<kiss_fft_cpx>>& frames, std::vector<float>& output)
+{
+	m_stftProcessor->inverse(frames, output);
 }
