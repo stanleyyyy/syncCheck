@@ -3,30 +3,22 @@
 #include <stdexcept>
 #include <algorithm>
 #include <cstdlib>
+#include <cassert>
 #include "Logger.h"
 
 STFTProcessor::STFTProcessor(int fftSize, int hopSize, int windowSize)
 	: m_fftSize(fftSize)
 {
-	if (m_fftSize <= 0 || hopSize <= 0) {
-		DBG_ERROR("FFT size and hop size must be positive.");
-		return;
-	}
-	if (hopSize * 2 != m_fftSize) {
-		DBG_ERROR("This two‐Hann example requires hopSize = fftSize/2 for perfect reconstruction.");
-		return;
-	}
+	ASSERT_WITH_ERROR(fftSize > 0 && hopSize > 0, "FFT size and hop size must be positive.");
+	ASSERT_WITH_ERROR(hopSize == m_fftSize / 2 || hopSize == m_fftSize / 4, "This two‐Hann example requires hopSize = fftSize/2 or fftSize/4 for perfect reconstruction.");
 	if (windowSize <= 0) {
 		windowSize = m_fftSize;
 	}
 	else {
-		if (windowSize > m_fftSize) {
-			DBG_ERROR("Window size cannot exceed FFT size.");
-			return;
-		}
+		ASSERT_WITH_ERROR(windowSize <= m_fftSize, "Window size cannot exceed FFT size.");
 	}
 
-	m_windowGenerator = std::make_unique<STFTWindowGenerator>(windowSize, hopSize);
+	m_windowGenerator = std::make_unique<STFTWindowGenerator>(windowSize, (windowSize - hopSize));
 	m_fftWrapper = std::make_unique<KissFFTWrapper>(m_fftSize);
 
 	// For streaming inverse processing we initialize the overlap buffer.

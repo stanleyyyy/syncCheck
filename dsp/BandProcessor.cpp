@@ -1,6 +1,5 @@
 #include "BandProcessor.h"
-#include <assert.h>
-
+#include "Logger.h"
 BandProcessor::BandProcessor(const SyncCheckConfig &config, const SyncCheckConfig::Band &band)
 	: m_config(config)
 	, m_stftProcessor(std::make_unique<STFTProcessor>(config.getBlockSize(), config.getHopSize()))
@@ -61,8 +60,8 @@ BandProcessor &BandProcessor::operator=(BandProcessor &&other) noexcept
 
 void BandProcessor::processBlock(const std::vector<float>& input, std::vector<float>& output)
 {
-	assert(input.size() == m_config.getBlockSize());
-	assert(output.size() == m_config.getBlockSize());
+	ASSERT_WITH_ERROR(input.size() == m_config.getBlockSize(), "Input block size must match the configured block size.");
+	ASSERT_WITH_ERROR(output.size() == m_config.getBlockSize(), "Output block size must match the configured block size.");
 
 	// Perform STFT analysis
 	auto frames = m_stftProcessor->forward(input);
@@ -103,9 +102,9 @@ void BandProcessor::processBlockWithShift(const std::vector<float>& input_backgr
 										std::vector<float>& output,
 										const SyncCheckConfig::Band &clearBand)
 {
-	assert(input_background.size() == m_config.getBlockSize());
-	assert(input_to_shift.size() == m_config.getBlockSize());
-	assert(output.size() == m_config.getBlockSize());
+	ASSERT_WITH_ERROR(input_background.size() == m_config.getBlockSize(), "Input background block size must match the configured block size.");
+	ASSERT_WITH_ERROR(input_to_shift.size() == m_config.getBlockSize(), "Input to shift block size must match the configured block size.");
+	ASSERT_WITH_ERROR(output.size() == m_config.getBlockSize(), "Output block size must match the configured block size.");
 
 	// Perform STFT analysis on both signals
 	auto frames_background = m_stftProcessor->forward(input_background);
@@ -144,7 +143,7 @@ void BandProcessor::processBlockWithShiftFFT(
 		const SyncCheckConfig::Band& clearBand)
 {
 	output.resize(m_config.getBlockSize());
-	assert(output.size() == m_config.getBlockSize());
+	ASSERT_WITH_ERROR(output.size() == m_config.getBlockSize(), "Output block size must match the configured block size.");
 
 	std::size_t clearStartBin = clearBand.getStartBin(m_config.getBlockSize(), m_config.getSampleRate());
 	std::size_t clearEndBin   = clearBand.getEndBin(m_config.getBlockSize(), m_config.getSampleRate());

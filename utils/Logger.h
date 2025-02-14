@@ -1,6 +1,7 @@
 #pragma once
 #include <string>
 #include <sstream>
+#include <cassert>
 
 enum LogLevel {
 	LOG_FATAL = 0,
@@ -69,3 +70,15 @@ private:
 #define DBG_INFO_INLINE(...)	do { if (Logger::getInstance().isEnabledFor(LOG_INFO))			LOG_INLINE_STREAM(LOG_INFO) << __VA_ARGS__; } while(0)
 #define DBG_DEBUG_INLINE(...)	do { if (Logger::getInstance().isEnabledFor(LOG_DEBUG))			LOG_INLINE_STREAM(LOG_DEBUG) << __VA_ARGS__; } while(0)
 #define DBG_TRACE_INLINE(...)	do { if (Logger::getInstance().isEnabledFor(LOG_TRACE))			LOG_INLINE_STREAM(LOG_TRACE) << __VA_ARGS__; } while(0)
+
+/*
+ * Assert with error message.
+ * This is a macro that asserts a condition and logs an error message if the condition is false.
+ */
+#define ASSERT_WITH_ERROR(condition, message) \
+		do { \
+			if (!(condition)) { \
+				DBG_ERROR(__FUNCTION__ << ", line " << __LINE__ << ": " << message); \
+				assert(false); \
+			} \
+		} while(0)

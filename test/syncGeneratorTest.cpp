@@ -1,6 +1,5 @@
 #include "SyncSignalGenerator.h"
 #include "Logger.h"
-#include <cassert>
 #include <iomanip>
 #include <iostream>
 
@@ -42,7 +41,7 @@ void testSequentialVsPositionGeneration()
 			DBG_ERROR("Mismatch at position: " << pos);
 			DBG_ERROR("Sequential value: " << std::setw(8) << seq_value << " (0x" << std::hex << seq_value << ")");
 			DBG_ERROR("Position value: " << std::setw(8) << pos_value << " (0x" << std::hex << pos_value << ")");
-			assert(false && "Values don't match!");
+			ASSERT_WITH_ERROR(false, "Values don't match!");
 		}
 	}
 
@@ -56,7 +55,7 @@ void testSequentialVsPositionGeneration()
 			DBG_ERROR("Mismatch in consecutive test at position: " << i);
 			DBG_ERROR("Sequential value: 0x" << std::hex << seq_value);
 			DBG_ERROR("Position value:   0x" << std::hex << pos_value);
-			assert(false && "Consecutive values don't match!");
+			ASSERT_WITH_ERROR(false, "Consecutive values don't match!");
 		}
 	}
 

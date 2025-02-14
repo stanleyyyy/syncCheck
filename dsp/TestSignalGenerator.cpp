@@ -2,7 +2,6 @@
 #include "SyncCheck.h"
 #include "Logger.h"
 #include <sndfile.h>
-#include <assert.h>
 #include <iomanip>
 
 TestSignalGenerator::TestSignalGenerator(const SyncCheckConfig &config)

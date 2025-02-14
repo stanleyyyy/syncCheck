@@ -1,8 +1,7 @@
 #include "SyncCheck.h"
 #include "Logger.h"
 #include <iomanip>
-#include <cassert>
-
+#include "Logger.h"
 FFTSyncCheck::FFTSyncCheck(const SyncCheckConfig& config)
 	: m_config(config)
 	, m_bands(config.getNumBands())

@@ -1,7 +1,8 @@
 #include "DelayLine.h"
 #include <algorithm>
 #include <cstring>
-#include <assert.h>
+#include "Logger.h"
+
 DelayLine::DelayLine(int maxDelay) :
 	m_writePos(0),
 	m_maxDelay(maxDelay)
@@ -14,7 +15,7 @@ DelayLine::DelayLine(int maxDelay) :
 float DelayLine::process(float input, int delay)
 {
 	// Ensure delay is within bounds
-	assert((delay > -m_maxDelay) && (delay < m_maxDelay));
+	ASSERT_WITH_ERROR((delay > -m_maxDelay) && (delay < m_maxDelay), "Delay is out of bounds.");
 
 	// Write input to buffer
 	m_buffer[m_writePos % m_buffer.size()] = input;
@@ -28,9 +29,9 @@ float DelayLine::process(float input, int delay)
 void DelayLine::processBlock(const std::vector<float> &inputData, std::vector<float> &outputData, const std::size_t framesToProcess, const int delay)
 {
 	// Ensure delay is within bounds
-	assert((delay > -m_maxDelay) && (delay < m_maxDelay));
-	assert(inputData.size() >= framesToProcess);
-	assert(outputData.size() >= framesToProcess);
+	ASSERT_WITH_ERROR((delay > -m_maxDelay) && (delay < m_maxDelay), "Delay is out of bounds.");
+	ASSERT_WITH_ERROR(inputData.size() >= framesToProcess, "Input data size must be greater than or equal to frames to process.");
+	ASSERT_WITH_ERROR(outputData.size() >= framesToProcess, "Output data size must be greater than or equal to frames to process.");
 
 	// Process each sample in the block
 	for (size_t i = 0; i < framesToProcess; ++i)
