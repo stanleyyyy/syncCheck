@@ -35,7 +35,7 @@ public:
 	 * Processes a sequence of frames, performing overlap–add with an internal buffer.
 	 * Returns hopSize samples per frame processed.
 	 */
-	std::vector<float> inverse(const std::vector<std::vector<kiss_fft_cpx>> &frames);
+	void inverse(const std::vector<std::vector<kiss_fft_cpx>>& frames, std::vector<float>& output);
 
 	/**
 	 * Process a single frame and return hopSize samples.
@@ -48,4 +48,7 @@ private:
 	std::unique_ptr<STFTWindowGenerator> m_windowGenerator;
 	std::unique_ptr<KissFFTWrapper> m_fftWrapper;
 	std::vector<float> m_overlapBuffer;
+	std::vector<float> m_ifftBuffer;
+	std::vector<float> m_timeFrameBuffer;
+	std::vector<float> m_recenteredBuffer;
 };

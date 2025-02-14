@@ -11,20 +11,21 @@ STFTProcessor::STFTProcessor(int fftSize, int hopSize, int windowSize)
 {
 	ASSERT_WITH_ERROR(fftSize > 0 && hopSize > 0, "FFT size and hop size must be positive.");
 	ASSERT_WITH_ERROR(hopSize == m_fftSize / 2 || hopSize == m_fftSize / 4, "This two‐Hann example requires hopSize = fftSize/2 or fftSize/4 for perfect reconstruction.");
+
 	if (windowSize <= 0) {
-		windowSize = m_fftSize;
-	}
-	else {
-		ASSERT_WITH_ERROR(windowSize <= m_fftSize, "Window size cannot exceed FFT size.");
+		windowSize = fftSize; // typical
+	} else {
+		ASSERT_WITH_ERROR(windowSize <= fftSize, "Window size cannot exceed FFT size.");
 	}
 
+	// overlap = windowSize - hopSize
 	m_windowGenerator = std::make_unique<STFTWindowGenerator>(windowSize, (windowSize - hopSize));
 	m_fftWrapper = std::make_unique<KissFFTWrapper>(m_fftSize);
 
-	// For streaming inverse processing we initialize the overlap buffer.
-	// For the typical two-Hann case (windowSize == fftSize) the IFFT produces fftSize samples,
-	// of which the first hopSize samples (i.e. fftSize/2) are output and the remaining fftSize/2 samples are overlapped.
-	// In the more general case, we consider the first windowSize samples and overlap (windowSize - hopSize) samples.
+	// Initialize member buffers
+	m_ifftBuffer.resize(m_fftSize, 0.0f);
+	m_timeFrameBuffer.resize(m_windowGenerator->getWindowLength(), 0.0f);
+	m_recenteredBuffer.resize(m_windowGenerator->getWindowLength(), 0.0f);
 	m_overlapBuffer.resize(m_windowGenerator->getWindowLength() - m_windowGenerator->getHopSize(), 0.0f);
 }
 
@@ -32,7 +33,11 @@ STFTProcessor::~STFTProcessor() = default;
 
 std::vector<std::vector<kiss_fft_cpx>> STFTProcessor::forward(const std::vector<float> &input)
 {
-	const int numFrames = (static_cast<int>(input.size()) - m_windowGenerator->getWindowLength() + m_windowGenerator->getHopSize()) / m_windowGenerator->getHopSize();
+	const int wLen = m_windowGenerator->getWindowLength();
+	const int hop = m_windowGenerator->getHopSize();
+
+	// Number of complete frames that fit
+	int numFrames = (static_cast<int>(input.size()) - wLen + hop) / hop;
 	if (numFrames <= 0) {
 		return {};
 	}
@@ -43,16 +48,17 @@ std::vector<std::vector<kiss_fft_cpx>> STFTProcessor::forward(const std::vector<
 	std::vector<float> fftIn(m_fftSize, 0.0f);
 	std::vector<kiss_fft_cpx> fftOut(m_fftSize / 2 + 1);
 
+	const auto &analysisWin = m_windowGenerator->getAnalysisWindow();
+
 	for (int f = 0; f < numFrames; f++) {
-		const int start = f * m_windowGenerator->getHopSize();
+		const int start = f * hop;
 		std::fill(fftIn.begin(), fftIn.end(), 0.0f);
 
-		// Apply window
-		auto window = m_windowGenerator->getAnalysisWindow();
-		for (int n = 0; n < m_windowGenerator->getWindowLength(); n++) {
+		// Apply analysis window
+		for (int n = 0; n < wLen; n++) {
 			int idx = start + n;
 			if (idx < static_cast<int>(input.size())) {
-				fftIn[n] = input[idx] * window[n];
+				fftIn[n] = input[idx] * static_cast<float>(analysisWin[n]);
 			}
 		}
 
@@ -68,38 +74,50 @@ std::vector<std::vector<kiss_fft_cpx>> STFTProcessor::forward(const std::vector<
 // This method performs the IFFT, scales, applies the synthesis window,
 // then overlap-adds the stored tail (if any) and returns hopSize new samples.
 // The new overlap (tail) is stored for the next call.
-std::vector<float> STFTProcessor::processFrame(const std::vector<kiss_fft_cpx> &frame)
+std::vector<float> STFTProcessor::processFrame(const std::vector<kiss_fft_cpx>& frame)
 {
 	if (frame.size() != static_cast<size_t>(m_fftSize / 2 + 1)) {
 		throw std::runtime_error("Frame size mismatch in processFrame.");
 	}
 
-	std::vector<float> ifftOut(m_fftSize, 0.0f);
+	std::fill(m_ifftBuffer.begin(), m_ifftBuffer.end(), 0.0f);
+	// Inverse FFT with built-in scaling (Kiss FFT already applies 1/fftSize)
+	m_fftWrapper->inverse(frame, m_ifftBuffer, true);
 
-	// Perform inverse FFT
-	m_fftWrapper->inverse(frame, ifftOut, true);
+	const int wLen = m_windowGenerator->getWindowLength();
+	const int hop = m_windowGenerator->getHopSize();
 
-	// Apply synthesis window (only for first windowSize_ samples)
-	auto window = m_windowGenerator->getSynthesisWindow();
-	for (int i = 0; i < m_windowGenerator->getWindowLength(); i++) {
-		ifftOut[i] *= window[i];
+	// Use only the first wLen samples from the IFFT output.
+	for (int i = 0; i < wLen; i++) {
+		m_timeFrameBuffer[i] = m_ifftBuffer[i];
 	}
 
-	// Compute output:
-	// We output the first hopSize_ samples combined with the stored overlap.
-	// (For the typical two-Hann, windowSize_ == fftSize_ and hopSize_ == fftSize_/2.)
-	std::vector<float> output(m_windowGenerator->getHopSize(), 0.0f);
-	for (int i = 0; i < m_windowGenerator->getHopSize(); i++) {
-		// Add the stored overlap (if any) to the new samples.
-		// Note: m_overlapBuffer is sized (windowSize_ - hopSize_).
+	// Apply recentering only if hop is not half the window length (i.e. for 75% overlap)
+	if (hop != wLen / 2) {
+		int shift = wLen / 2; // effective delay compensation
+		for (int i = 0; i < wLen; i++) {
+			int src = (i + shift) % wLen;
+			m_recenteredBuffer[i] = m_timeFrameBuffer[src];
+		}
+		std::copy(m_recenteredBuffer.begin(), m_recenteredBuffer.end(), m_timeFrameBuffer.begin());
+	}
+
+	// Apply synthesis window
+	const auto& synWin = m_windowGenerator->getSynthesisWindow();
+	for (int i = 0; i < wLen; i++) {
+		m_timeFrameBuffer[i] *= static_cast<float>(synWin[i]);
+	}
+
+	// Overlap-add: output first hop samples + stored overlap
+	std::vector<float> output(hop, 0.0f);
+	for (int i = 0; i < hop; i++) {
 		float oldOverlap = (i < static_cast<int>(m_overlapBuffer.size())) ? m_overlapBuffer[i] : 0.0f;
-		output[i] = ifftOut[i] + oldOverlap;
+		output[i] = m_timeFrameBuffer[i] + oldOverlap;
 	}
 
-	// Update the overlap buffer with the tail of the current IFFT output.
-	// That is, the samples from index hopSize_ up to windowSize_ (which are meant to be overlapped with the next frame).
-	for (int i = 0; i < m_windowGenerator->getWindowLength() - m_windowGenerator->getHopSize(); i++) {
-		m_overlapBuffer[i] = ifftOut[m_windowGenerator->getHopSize() + i];
+	// Update overlap buffer with the tail of the current frame.
+	for (int i = 0; i < wLen - hop; i++) {
+		m_overlapBuffer[i] = m_timeFrameBuffer[hop + i];
 	}
 
 	return output;
@@ -107,13 +125,15 @@ std::vector<float> STFTProcessor::processFrame(const std::vector<kiss_fft_cpx> &
 
 // Batch inverse: process multiple frames sequentially and concatenate the output.
 // This method calls processFrame() for each frame, so that internal overlap is maintained across calls.
-std::vector<float> STFTProcessor::inverse(const std::vector<std::vector<kiss_fft_cpx>> &frames)
+void STFTProcessor::inverse(const std::vector<std::vector<kiss_fft_cpx>>& frames, std::vector<float>& output)
 {
-	std::vector<float> output;
-	// Process each frame sequentially.
-	for (const auto &frame : frames) {
+	const size_t hopSize = m_windowGenerator->getHopSize();
+	output.resize(frames.size() * hopSize);
+	size_t outPos = 0;
+
+	for (const auto& frame : frames) {
 		std::vector<float> seg = processFrame(frame);
-		output.insert(output.end(), seg.begin(), seg.end());
+		std::copy(seg.begin(), seg.end(), output.begin() + outPos);
+		outPos += hopSize;
 	}
-	return output;
 }
