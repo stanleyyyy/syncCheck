@@ -154,6 +154,10 @@ void TestSignalGenerator::generateReferenceSignal(std::vector<float> &output, st
 		}
 	}
 
+	// Generate a sine wave with a frequency of 0.3 Hz
+	const float freq = 0.3f;
+	const float sample_rate = m_config.getSampleRate();
+
 	// Add a pulse every second (width: 10ms, amplitude: 1.0)
 	for (std::size_t i = 0; i < numFrames; i++) {
 		int sample_in_second = (m_currentSample + i) % m_config.getSampleRate();
@@ -163,15 +167,7 @@ void TestSignalGenerator::generateReferenceSignal(std::vector<float> &output, st
 		}
 
 		// Generate sine wave for testing
-		float freq = 0.3f; // 440 Hz
-		float sample_rate = m_config.getSampleRate();
-		static float phase = 0.0f;
-
-		output[i] += 0.02f * sinf(2.0f * M_PI * freq * phase);
-		phase += 1.0f / sample_rate;
-		if (phase >= 1.0f) {
-			phase -= 1.0f;
-		}
+		output[i] += 0.2 * std::sin(2.0f * M_PI * freq * (m_currentSample + i) / sample_rate);
 	}
 
 	m_currentSample += numFrames;
