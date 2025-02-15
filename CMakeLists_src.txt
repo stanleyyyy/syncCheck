@@ -5,6 +5,7 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/kissfft)
 
 set(syncCheck_HEADERS
 	${syncCheck_PUBLIC_HEADERS}
+	dsp/ButterworthLowpass.h
 	dsp/DelayLine.h
 	dsp/SyncCheck.h
 	dsp/SyncCheckConfig.h
