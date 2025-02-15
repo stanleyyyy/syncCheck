@@ -18,6 +18,10 @@ FFTSyncCheck::FFTSyncCheck(const SyncCheckConfig& config)
 {
 	// Use bands from config
 	m_bands = config.getBands();
+
+	// Configure Butterworth lowpass filter for correlation data filtering.
+	// Cutoff frequency is 1/100 of nyquist frequency.
+	m_lowpassFilter = std::make_unique<ButterworthLowpass>(2, 0.01);
 }
 
 FFTSyncCheck::~FFTSyncCheck() = default;
@@ -33,6 +37,38 @@ void FFTSyncCheck::extractBand(const std::vector<kiss_fft_cpx>& input, std::vect
 		}
 	}
 }
+
+std::vector<float> FFTSyncCheck::getSmoothEnvelope(const std::vector<float> &data)
+{
+	// Ensure the lowpass filter has been initialized.
+	if (!m_lowpassFilter) {
+		DBG_ERROR("Lowpass filter not initialized");
+		return data;
+	}
+
+	// The envelope of a signal represents its amplitude variation over time.
+	// Typically, the envelope is obtained by taking the absolute value of the signal.
+	//
+	// Without taking the absolute value, the signal remains bipolar (i.e. oscillates between positive and negative values).
+	// Filtering a bipolar signal directly—especially with a zero-phase (forward-reverse) approach—can lead to cancellation effects
+	// or instability at the filter's boundaries. In particular, the two-pass filtfilt method is sensitive to the phase and sign
+	// of the input. Oscillations that cross zero may produce large transients or boundary artifacts that can cause the filter to
+	// fail or produce NaNs.
+	//
+	// By taking the absolute value, the signal is converted to a unipolar one. This emphasizes the amplitude (or energy)
+	// variations and removes the rapid sign changes. The result is a smoother signal that is much easier for the low-pass filter
+	// to process reliably without numerical instability.
+	std::vector<float> absData(data.size());
+	for (size_t i = 0; i < data.size(); i++) {
+		absData[i] = std::abs(data[i]);
+	}
+
+	// Apply zero-phase filtering using the lowpass filter.
+	// This forward-reverse filtering (filtfilt) helps to eliminate phase distortions.
+	m_lowpassFilter->filtfilt(absData);
+	return absData;
+}
+
 
 float FFTSyncCheck::computePSLR(const std::vector<float> &corr, int exclusion_radius)
 {
@@ -147,6 +183,11 @@ std::pair<float, float> FFTSyncCheck::calculateBandDelayFFT(const std::vector<ki
 	}
 	m_paddedTimeData = shiftedData;
 
+	// Apply envelope smoothing to the correlation data
+	bool lowPassFilter = true;
+	if (lowPassFilter)
+		m_paddedTimeData = getSmoothEnvelope(m_paddedTimeData);
+
 	// Compute PSLR (Peak-to-Side-Lobe Ratio)
 	float pslr_db = computePSLR(m_paddedTimeData, padded_size / 64);
 
@@ -188,29 +229,31 @@ std::pair<float, float> FFTSyncCheck::calculateBandDelayFFT(const std::vector<ki
 	}
 
 	// Optional search for a secondary opposite-sign peak near max_idx.
-	const float PEAK_THRESHOLD = 0.5f;
-	const std::size_t MAX_PEAK_SEPARATION = static_cast<std::size_t>(0.5f * m_config.getSampleRate() * interpFactor / 1000.0f);
-	float main_val = m_paddedTimeData[max_idx];
-	int opposite_peak_idx = -1;
-	float opposite_peak_val = 0.0f;
-	int start_i = std::max(0, max_idx - static_cast<int>(MAX_PEAK_SEPARATION));
-	int end_i = std::min<int>(padded_size, max_idx + static_cast<int>(MAX_PEAK_SEPARATION));
-	for (int i = start_i; i < end_i; i++) {
-		float val = m_paddedTimeData[i];
-		if (main_val * val < 0.0f && fabsf(val) > max_corr * PEAK_THRESHOLD) {
-			if (fabsf(val) > fabsf(opposite_peak_val)) {
-				opposite_peak_val = val;
-				opposite_peak_idx = i;
+	if (!lowPassFilter) {
+		const float PEAK_THRESHOLD = 0.5f;
+		const std::size_t MAX_PEAK_SEPARATION = static_cast<std::size_t>(0.5f * m_config.getSampleRate() * interpFactor / 1000.0f);
+		float main_val = m_paddedTimeData[max_idx];
+		int opposite_peak_idx = -1;
+		float opposite_peak_val = 0.0f;
+		int start_i = std::max(0, max_idx - static_cast<int>(MAX_PEAK_SEPARATION));
+		int end_i = std::min<int>(padded_size, max_idx + static_cast<int>(MAX_PEAK_SEPARATION));
+		for (int i = start_i; i < end_i; i++) {
+			float val = m_paddedTimeData[i];
+			if (main_val * val < 0.0f && fabsf(val) > max_corr * PEAK_THRESHOLD) {
+				if (fabsf(val) > fabsf(opposite_peak_val)) {
+					opposite_peak_val = val;
+					opposite_peak_idx = i;
+				}
 			}
 		}
-	}
 
-	// Merge main_idx with opposite peak index if found
-	if (opposite_peak_idx >= 0) {
-		if (main_val > 0.0f) {
-			max_idx = static_cast<int>(roundf(0.6f * max_idx + 0.4f * opposite_peak_idx));
-		} else {
-			max_idx = static_cast<int>(roundf(0.4f * max_idx + 0.6f * opposite_peak_idx));
+		// Merge main_idx with opposite peak index if found
+		if (opposite_peak_idx >= 0) {
+			if (main_val > 0.0f) {
+				max_idx = static_cast<int>(roundf(0.6f * max_idx + 0.4f * opposite_peak_idx));
+			} else {
+				max_idx = static_cast<int>(roundf(0.4f * max_idx + 0.6f * opposite_peak_idx));
+			}
 		}
 	}
 

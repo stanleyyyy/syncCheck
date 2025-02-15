@@ -4,6 +4,7 @@
 #include "STFTWindowGenerator.h"
 #include "SyncCheckConfig.h"
 #include "DelayStats.h"
+#include "ButterworthLowpass.h"
 #include <vector>
 #include <memory>
 
@@ -95,6 +96,18 @@ public:
 	const SyncCheckConfig& getConfig() const { return m_config; }
 
 	/**
+		@brief Computes the smoothed envelope of the input signal.
+
+		The function computes the absolute value of the input data and then applies a low-pass
+		Butterworth filter with zero-phase filtering. The sampling interval is derived from the
+		times vector.
+
+		@param data The input signal.
+		@return The smoothed envelope.
+	*/
+	std::vector<float> getSmoothEnvelope(const std::vector<float>& data);
+
+	/**
 	 * @brief Compute the PSLR (Peak-to-Side-Lobe Ratio) of a correlation vector.
 	 *
 	 * @param corr The correlation vector.
@@ -130,4 +143,7 @@ private:
 	std::vector<kiss_fft_cpx> m_correlationData;
 	std::vector<kiss_fft_cpx> m_correlationDataPadded;
 	std::vector<float> m_paddedTimeData;
+
+	// Butterworth lowpass filter
+	std::unique_ptr<ButterworthLowpass> m_lowpassFilter;
 };
