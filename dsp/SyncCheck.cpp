@@ -34,7 +34,48 @@ void FFTSyncCheck::extractBand(const std::vector<kiss_fft_cpx>& input, std::vect
 	}
 }
 
-float FFTSyncCheck::calculateBandDelayFFT(const std::vector<kiss_fft_cpx> &fft_data, std::size_t band1, std::size_t band2)
+float FFTSyncCheck::computePSLR(const std::vector<float> &corr, int exclusion_radius)
+{
+	float pslr_linear = 0.0f;
+	int N = static_cast<int>(corr.size());
+	int main_idx = 0;
+	float main_peak = 0.0f;
+	// Find the index and value of the main peak (by absolute value)
+	for (int i = 0; i < N; i++) {
+		float abs_val = std::fabs(corr[i]);
+		if (abs_val > main_peak) {
+			main_peak = abs_val;
+			main_idx = i;
+		}
+	}
+	// Determine the exclusion window around the main peak
+	int left = std::max(0, main_idx - exclusion_radius);
+	int right = std::min(N, main_idx + exclusion_radius + 1);
+
+	// Find the maximum absolute value outside the exclusion window (side lobe)
+	float largest_side = 0.0f;
+	for (int i = 0; i < left; i++) {
+		float abs_val = std::fabs(corr[i]);
+		if (abs_val > largest_side)
+			largest_side = abs_val;
+	}
+	for (int i = right; i < N; i++) {
+		float abs_val = std::fabs(corr[i]);
+		if (abs_val > largest_side)
+			largest_side = abs_val;
+	}
+	// Avoid division by zero; if no side lobe is found, set PSLR to infinity
+	if (largest_side < 1e-12f)
+		pslr_linear = std::numeric_limits<float>::infinity();
+	else
+		pslr_linear = main_peak / largest_side;
+
+	// Compute PSLR in dB
+	float pslr_db = std::isfinite(pslr_linear) ? 20.0f * std::log10(pslr_linear) : std::numeric_limits<float>::infinity();
+	return pslr_db;
+}
+
+std::pair<float, float> FFTSyncCheck::calculateBandDelayFFT(const std::vector<kiss_fft_cpx> &fft_data, std::size_t band1, std::size_t band2)
 {
 	// Get configuration parameters.
 	const std::size_t blockSize = m_config.getBlockSize();
@@ -95,97 +136,100 @@ float FFTSyncCheck::calculateBandDelayFFT(const std::vector<kiss_fft_cpx> &fft_d
 	// Inverse FFT - prepare an output buffer with padded_size samples.
 	if (!m_paddedFftProcessor->inverse(m_correlationDataPadded, m_paddedTimeData, true)) {
 		DBG_ERROR("Inverse FFT failed.");
-		return 0.0f;
+		return std::make_pair(0.0f, 0.0f);
 	}
 
-	// Find the correlation peak and compute delay
+	// SHIFT the data so that zero-lag is in the middle => index padded_size/2 corresponds to 0 delay
+	std::vector<float> shiftedData(padded_size);
+	for (std::size_t i = 0; i < padded_size; i++) {
+		// Shift by padded_size/2 forward
+		shiftedData[i] = m_paddedTimeData[(i + padded_size/2) % padded_size];
+	}
+	m_paddedTimeData = shiftedData;
+
+	// Compute PSLR (Peak-to-Side-Lobe Ratio)
+	float pslr_db = computePSLR(m_paddedTimeData, padded_size / 64);
+
+	// Write out the correlation data for debugging
+	{
+		static int dump_count = 0;
+		if (band1 == 2) {
+			char filename[256];
+			snprintf(filename, sizeof(filename), "correlation_data_%zu_%zu_%05d.bin", band1, band2, dump_count);
+			FILE* f = fopen(filename, "wb");
+			if (f) {
+				// Save parameters
+				int32_t params[] = {
+					static_cast<int32_t>(padded_size),
+					static_cast<int32_t>(m_config.getSampleRate()),
+					static_cast<int32_t>(interpFactor)
+				};
+				fwrite(params, sizeof(params[0]), sizeof(params) / sizeof(params[0]), f);
+				// Save SHIFTED correlation data
+				fwrite(m_paddedTimeData.data(), sizeof(float), padded_size, f);
+				fclose(f);
+			}
+		}
+		if (band1 == m_config.getNumBands() - 1) {
+			dump_count++;
+		}
+	}
+
+	// Find the peak. (Now the array is "centered"; if the true delay is zero, the max should appear near index padded_size/2.)
 	float max_corr = 0.0f;
 	int max_idx = 0;
 	for (std::size_t i = 0; i < padded_size; i++) {
-		float abs_val = fabsf(m_paddedTimeData[i]);
+		float val = m_paddedTimeData[i];
+		float abs_val = fabsf(val);
 		if (abs_val > max_corr) {
 			max_corr = abs_val;
 			max_idx = static_cast<int>(i);
 		}
 	}
 
-	// Optionally search for a symmetric (opposite sign) secondary peak.
-	const float PEAK_THRESHOLD = 0.5f;																							// Threshold for secondary peak
-	const std::size_t MAX_PEAK_SEPARATION = static_cast<std::size_t>(0.5f * m_config.getSampleRate() * interpFactor / 1000.0f); // e.g. 0.5ms max separation
-
+	// Optional search for a secondary opposite-sign peak near max_idx.
+	const float PEAK_THRESHOLD = 0.5f;
+	const std::size_t MAX_PEAK_SEPARATION = static_cast<std::size_t>(0.5f * m_config.getSampleRate() * interpFactor / 1000.0f);
 	float main_val = m_paddedTimeData[max_idx];
 	int opposite_peak_idx = -1;
 	float opposite_peak_val = 0.0f;
-	for (std::size_t i = std::max(0, max_idx - static_cast<int>(MAX_PEAK_SEPARATION)); i < std::min(padded_size, max_idx + MAX_PEAK_SEPARATION); i++) {
+	int start_i = std::max(0, max_idx - static_cast<int>(MAX_PEAK_SEPARATION));
+	int end_i = std::min<int>(padded_size, max_idx + static_cast<int>(MAX_PEAK_SEPARATION));
+	for (int i = start_i; i < end_i; i++) {
 		float val = m_paddedTimeData[i];
-		if (main_val * val < 0 && fabsf(val) > max_corr * PEAK_THRESHOLD) { // Opposite sign and significant
+		if (main_val * val < 0.0f && fabsf(val) > max_corr * PEAK_THRESHOLD) {
 			if (fabsf(val) > fabsf(opposite_peak_val)) {
 				opposite_peak_val = val;
-				opposite_peak_idx = static_cast<int>(i);
+				opposite_peak_idx = i;
 			}
 		}
 	}
+
+	// Merge main_idx with opposite peak index if found
 	if (opposite_peak_idx >= 0) {
-		if (main_val > 0)
+		if (main_val > 0.0f) {
 			max_idx = static_cast<int>(roundf(0.6f * max_idx + 0.4f * opposite_peak_idx));
-		else
+		} else {
 			max_idx = static_cast<int>(roundf(0.4f * max_idx + 0.6f * opposite_peak_idx));
-	}
-
-	// // Save correlation data for visualization
-	// {
-	// 	static int dump_count = 0;
-	// 	char filename[256];
-	// 	snprintf(filename, sizeof(filename), "correlation_data_%zu_%zu_%d.bin", band1, band2, dump_count);
-	// 	FILE* f = fopen(filename, "wb");
-	// 	if (f) {
-	// 		// Save parameters
-	// 		int32_t params[] = {(int)padded_size, (int)m_config.getSampleRate(), (int)interpFactor, (int)max_idx};
-	// 		fwrite(params, sizeof(int32_t), sizeof(params) / sizeof(params[0]), f);
-	// 		// Save correlation data
-	// 		fwrite(m_paddedTimeData.data(), sizeof(float), padded_size, f);
-	// 		fclose(f);
-	// 	}
-	// 	// Only increment dump count after processing last band pair
-	// 	if (band1 == m_config.getNumBands() - 1) {
-	// 		dump_count++;
-	// 	}
-	// }
-
-	{
-		float delay = 0.0f;
-		if (max_idx > (int)padded_size / 2) {
-			delay = -((int)padded_size - max_idx) / (static_cast<float>(m_config.getSampleRate()) * m_config.getInterpFactor());
 		}
-		else {
-			delay = max_idx / (static_cast<float>(m_config.getSampleRate()) * m_config.getInterpFactor());
-		}
-		// convert to ms
-		delay *= 1000.0f;
-		// DBG_INFO("Delay " << band1 << "-" << band2 << ": " << delay << " ms");
 	}
 
-	if (band2 == m_config.getNumBands() - 1) {
-		// DBG_INFO("");
-	}
-
-	// Parabolic interpolation for sub-sample accuracy.
-	float alpha = m_paddedTimeData[(max_idx + padded_size - 1) % padded_size];
-	float beta = m_paddedTimeData[max_idx];
+	// Parabolic interpolation around max_idx
+	float alpha = m_paddedTimeData[(max_idx - 1 + padded_size) % padded_size];
+	float beta  = m_paddedTimeData[max_idx];
 	float gamma = m_paddedTimeData[(max_idx + 1) % padded_size];
 	float p = 0.5f * (alpha - gamma) / (alpha - 2.0f * beta + gamma);
-	float interpolated_idx = max_idx + (opposite_peak_idx < 0 ? p : 0);
+	float interpolated_idx = static_cast<float>(max_idx) + p;
 
-	// Convert the index to a time delay.
-	float delay = 0.0f;
-	if (interpolated_idx > padded_size / 2)
-		delay = -(padded_size - interpolated_idx) / (m_config.getSampleRate() * interpFactor);
-	else
-		delay = interpolated_idx / (m_config.getSampleRate() * interpFactor);
-
-	delay *= 1000.0f; // convert to ms
-	return delay;
+	// Convert that index to a delay in milliseconds.
+	// If "interpolated_idx" == padded_size/2 => delay = 0
+	// < padded_size/2 => negative delay
+	// > padded_size/2 => positive delay
+	float delay = (interpolated_idx - (float)(padded_size / 2)) / (static_cast<float>(m_config.getSampleRate()) * interpFactor);
+	delay *= 1000.0f; // ms
+	return std::make_pair(delay, pslr_db);
 }
+
 
 void FFTSyncCheck::printDelayStats(const std::vector<float>& expected_delays_ms)
 {
@@ -261,8 +305,8 @@ void FFTSyncCheck::processSampleBlock(const std::vector<float>& samples)
 
 			// Calculate delays relative to band 0 using the FFT data
 			for (std::size_t i = 1; i < m_config.getNumBands(); i++) {
-				float delay = calculateBandDelayFFT(fftData, i, 0);
-				m_delayStats[i].update(delay);
+				auto [delay, pslr] = calculateBandDelayFFT(fftData, i, 0);
+				m_delayStats[i].update(delay, pslr);
 			}
 
 			// consume 'hopsize' worth of samples from the buffer
@@ -280,11 +324,19 @@ float FFTSyncCheck::getFilteredDelay(std::size_t band)
 	return 0.0f;
 }
 
-std::vector<std::pair<float, float>> FFTSyncCheck::getDelayStats() const
+/**
+ * @brief Get all delay statistics
+ * @return Vector of tuples containing filtered delay, confidence and PSLR for each band
+ */
+std::vector<std::tuple<float, float, float>> FFTSyncCheck::getDelayStats() const
 {
-	std::vector<std::pair<float, float>> delays;
+	std::vector<std::tuple<float, float, float>> delays;
 	for (std::size_t i = 0; i < m_config.getNumBands(); i++) {
-		delays.push_back(std::make_pair(m_delayStats[i].m_filteredDelay, m_delayStats[i].m_confidence));
+		delays.push_back(std::make_tuple(
+			m_delayStats[i].m_filteredDelay,
+			m_delayStats[i].m_confidence,
+			m_delayStats[i].m_filteredPSLR
+		));
 	}
 	return delays;
 }

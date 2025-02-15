@@ -78,7 +78,7 @@ public:
 		}
 	}
 
-	void visualizeDelays(const std::vector<std::pair<float, float>> &estimates, const std::set<int> &bandsOfInterest)
+	void visualizeDelays(const std::vector<std::tuple<float, float, float>> &estimates, const std::set<int> &bandsOfInterest)
 	{
 		std::stringstream ss;
 		ss << std::fixed << std::setprecision(3);
@@ -88,24 +88,27 @@ public:
 		int center = m_width / 2;
 
 		for (size_t i = 0; i < estimates.size(); ++i) {
-			double delay = estimates[i].first;
-			double confidence = estimates[i].second;
+			double delay = std::get<0>(estimates[i]);
+			double confidence = std::get<1>(estimates[i]);
+			double pslr = std::get<2>(estimates[i]);
 
 			std::string color;
 			if (m_useColors) {
-				if (confidence > 0.7f)
+				if (pslr > 5.0f)
 					color = ANSI_COLOR_GREEN;
-				else if (confidence > 0.25f)
+				else if (pslr > 2.0)
 					color = ANSI_COLOR_YELLOW;
 				else
 					color = ANSI_COLOR_RED;
 			}
 
-			// Numeric display
+			// Numeric display with fixed widths
 			if (bandsOfInterest.empty() || bandsOfInterest.find(i) != bandsOfInterest.end()) {
-				ss << (m_useColors ? color : "") << "Band " << (i + 1) << ": "
-				<< std::setw(8) << delay << " ms [" << confidence << "]"
-				<< (m_useColors ? ANSI_COLOR_RESET : "") << " |";
+				ss << (m_useColors ? color : "") << "Band " << std::setw(2) << (i + 1) << ": "
+				   << std::setw(8) << delay << " ms [PSLR: "
+				   << std::fixed << std::setprecision(3) << std::setw(6) << pslr  // Fixed width of 6 for PSLR
+				   << " dB, confidence: " << std::setw(6) << confidence << "]"     // Fixed width of 6 for confidence
+				   << (m_useColors ? ANSI_COLOR_RESET : "") << " |";
 
 				// ASCII visualization
 				int position = center + static_cast<int>((delay / m_maxDelay) * (center - 1));
@@ -134,12 +137,15 @@ public:
 			for (size_t i = 0; i < estimates.size(); ++i) {
 
 				if (bandsOfInterest.empty() || bandsOfInterest.find(i) != bandsOfInterest.end()) {
-					const double delay = estimates[i].first;
-					const double confidence = estimates[i].second;
+					const double delay = std::get<0>(estimates[i]);
+					const double confidence = std::get<1>(estimates[i]);
+					const double pslr = std::get<2>(estimates[i]);
 
 					m_outputFile << "Band " << std::setw(1) << (i + 1) << ": "
 						<< std::fixed << std::setprecision(3) << std::setw(8) << delay
-						<< " ms, confidence: " << std::setw(5) << confidence << "";
+						<< " ms, confidence: " << std::setw(5) << confidence << ", PSLR: "
+						<< std::fixed << std::setprecision(3) << std::setw(5) << pslr;
+
 					if (i < estimates.size() - 1)
 						m_outputFile << ",";
 				}
@@ -758,7 +764,7 @@ int main(int argc, char *argv[])
 
 			statsUpdateTime += float(hopSize) / config.sampleRate;
 			if (statsUpdateTime >= config.statsRefreshRate) {
-				std::vector<std::pair<float, float>> estimates = syncChecker.getDelayStats();
+				std::vector<std::tuple<float, float, float>> estimates = syncChecker.getDelayStats();
 				visualizer.visualizeDelays(estimates, config.bandsOfInterest);
 				statsUpdateTime = 0.0f;
 			}

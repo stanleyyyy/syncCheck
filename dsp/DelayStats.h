@@ -10,32 +10,48 @@
 struct DelayStats {
 	static const int HISTORY_SIZE = 5;	///< Number of measurements to keep.
 	std::vector<float> m_history;		///< History of delay measurements.
+	std::vector<float> m_pslrHistory;	///< History of PSLR measurements.
 	float m_filteredDelay;				///< Filtered (median) delay.
+	float m_filteredPSLR;				///< Filtered (median) PSLR.
 	float m_confidence;					///< Confidence metric based on variance.
 
 	DelayStats()
 		: m_filteredDelay(0.0f)
+		, m_filteredPSLR(0.0f)
 		, m_confidence(0.0f)
 	{
 		m_history.reserve(HISTORY_SIZE);
+		m_pslrHistory.reserve(HISTORY_SIZE);
 	}
 
 	/**
-		 * @brief Update delay statistics with a new measurement.
-		 *
-		 * @param new_delay New delay measurement in seconds.
-		 */
-	void update(float new_delay)
+	 * @brief Update delay statistics with a new measurement.
+	 *
+	 * @param new_delay New delay measurement in seconds.
+	 * @param new_pslr New PSLR measurement in dB.
+	 */
+	void update(float new_delay, float new_pslr)
 	{
+		// // ignore any values with low pslr (below 2.0 dB)
+		// if (new_pslr < 2.0f) {
+		// 	return;
+		// }
+
 		if (m_history.size() >= HISTORY_SIZE) {
 			m_history.erase(m_history.begin());
+			m_pslrHistory.erase(m_pslrHistory.begin());
 		}
 		m_history.push_back(new_delay);
+		m_pslrHistory.push_back(new_pslr);
 
 		// by default use median
 		std::vector<float> sorted = m_history;
 		std::sort(sorted.begin(), sorted.end());
 		m_filteredDelay = sorted[sorted.size() / 2];
+
+		std::vector<float> sortedPSLR = m_pslrHistory;
+		std::sort(sortedPSLR.begin(), sortedPSLR.end());
+		m_filteredPSLR = sortedPSLR[sortedPSLR.size() / 2];
 
 		// Use Median Absolute Deviation (MAD) to handle outliers
 		if (m_history.size() == HISTORY_SIZE) {

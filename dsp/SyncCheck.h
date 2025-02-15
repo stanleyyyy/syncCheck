@@ -50,9 +50,9 @@ public:
 	 * @param fft_data Pre-computed FFT data
 	 * @param band1 Index of the first (reference) band
 	 * @param band2 Index of the second band
-	 * @return Calculated delay in seconds
+	 * @return Calculated delay in milliseconds and PSLR in dB
 	 */
-	float calculateBandDelayFFT(const std::vector<kiss_fft_cpx>& fft_data, std::size_t band1, std::size_t band2);
+	std::pair<float, float> calculateBandDelayFFT(const std::vector<kiss_fft_cpx>& fft_data, std::size_t band1, std::size_t band2);
 
 	/**
 	 * @brief Print comprehensive delay statistics for each frequency band.
@@ -80,7 +80,7 @@ public:
 	 * @brief Get all delay statistics
 	 * @return Vector of pairs containing filtered delay and confidence for each band
 	 */
-	std::vector<std::pair<float, float>> getDelayStats() const;
+	std::vector<std::tuple<float, float, float>> getDelayStats() const;
 
 	/**
 	 * @brief Get the sample rate.
@@ -93,6 +93,15 @@ public:
 	 * @return The current configuration
 	 */
 	const SyncCheckConfig& getConfig() const { return m_config; }
+
+	/**
+	 * @brief Compute the PSLR (Peak-to-Side-Lobe Ratio) of a correlation vector.
+	 *
+	 * @param corr The correlation vector.
+	 * @param exclusion_radius The number of samples around the main peak to exclude.
+	 * @return The PSLR in dB.
+	 */
+	float computePSLR(const std::vector<float>& corr, int exclusion_radius);
 
 private:
 	/**
