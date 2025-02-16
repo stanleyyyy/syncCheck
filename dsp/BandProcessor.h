@@ -117,6 +117,24 @@ public:
 
 private:
 	/**
+	 * @brief Compute a cosine taper window.
+	 *
+	 * @param length Number of FFT bins in the band.
+	 * @param taperFraction Fraction of bins at each edge to taper.
+	 * @param isClearBand True if the band is the clear band, false otherwise.
+	 * @return Precomputed taper window.
+	 */
+	static std::vector<float> computeTaperWindow(std::size_t length, float taperFraction, const bool &isClearBand = false);
+
+	/**
+	 * @brief Compute the taper fraction for a given desired transition width and band width.
+	 * @param desiredTransitionWidth Desired transition width in Hz.
+	 * @param bandWidthHz Width of the band in Hz.
+	 * @return Taper fraction.
+	 */
+	static float computeTaperFraction(float desiredTransitionWidth, float bandWidthHz);
+private:
+	/**
 	 * @brief Configuration for the band processor.
 	 */
 	SyncCheckConfig m_config;
@@ -145,5 +163,24 @@ private:
 	 * @brief Accumulated power outside the band.
 	 */
 	double m_outBandPower;
-};
 
+	/**
+	 * @brief Precomputed taper window for the shifting band.
+	 */
+	std::vector<float> m_shiftTaper;
+
+	/**
+	 * @brief Precomputed taper window for the clear band.
+	 */
+	std::vector<float> m_clearTaper;
+
+	/**
+	 * @brief Taper fraction (portion of the band over which tapering is applied).
+	 */
+	float m_shiftTaperFraction;
+
+	/**
+	 * @brief Taper fraction (portion of the band over which tapering is applied).
+	 */
+	float m_clearTaperFraction;
+};
