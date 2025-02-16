@@ -1,17 +1,15 @@
 #include "SyncCheck.h"
 #include "Logger.h"
 #include <iomanip>
-#include "Logger.h"
+#include <cmath>
+#include <algorithm>
+
 FFTSyncCheck::FFTSyncCheck(const SyncCheckConfig& config)
 	: m_config(config)
 	, m_bands(config.getNumBands())
-	, m_delayStats(config.getNumBands())
 	, m_fftProcessor(std::make_unique<KissFFTWrapper>(config.getBlockSize()))
 	, m_paddedFftProcessor(std::make_unique<KissFFTWrapper>(config.getBlockSize() * config.getInterpFactor()))
 	, m_windowGenerator(std::make_unique<STFTWindowGenerator>(config.getBlockSize(), config.getOverlapSize()))
-	, m_processingBufferFilled(0)
-	, m_processingBuffer(config.getBlockSize())
-	, m_windowedBuffer(config.getBlockSize())
 	, m_correlationData(config.getBlockSize() / 2 + 1)
 	, m_correlationDataPadded(config.getBlockSize() * config.getInterpFactor() / 2 + 1)
 	, m_paddedTimeData(config.getBlockSize() * config.getInterpFactor())
@@ -22,6 +20,24 @@ FFTSyncCheck::FFTSyncCheck(const SyncCheckConfig& config)
 	// Configure Butterworth lowpass filter for correlation data filtering.
 	// Cutoff frequency is 1/100 of nyquist frequency.
 	m_lowpassFilter = std::make_unique<ButterworthLowpass>(2, 0.01);
+
+	// By default we will use just a single input channel
+	setMultiChannelMode(1);
+
+	// Create default channel assignment for single-channel mode if no assignment is set.
+	std::vector<ChannelAssignment> assignments;
+	for (std::size_t band = 0; band < m_config.getNumBands(); band++) {
+		ChannelAssignment assign;
+		assign.refChannel = 0;
+		assign.refBand = 0;
+		assign.sigChannel = 0;
+		assign.sigBand = band;
+		assignments.push_back(assign);
+	}
+	setChannelAssignments(assignments);
+
+	// Initialize the common fill level.
+	m_processingBufferFilled = 0;
 }
 
 FFTSyncCheck::~FFTSyncCheck() = default;
@@ -111,7 +127,8 @@ float FFTSyncCheck::computePSLR(const std::vector<float> &corr, int exclusion_ra
 	return pslr_db;
 }
 
-std::pair<float, float> FFTSyncCheck::calculateBandDelayFFT(const std::vector<kiss_fft_cpx> &fft_data, std::size_t band1, std::size_t band2)
+std::pair<float, float> FFTSyncCheck::calculateBandDelayFFT(const std::vector<kiss_fft_cpx> &fft_data_ref, const std::vector<kiss_fft_cpx> &fft_data_sig,
+															std::size_t refBand, std::size_t sigBand)
 {
 	// Get configuration parameters.
 	const std::size_t blockSize = m_config.getBlockSize();
@@ -120,50 +137,41 @@ std::pair<float, float> FFTSyncCheck::calculateBandDelayFFT(const std::vector<ki
 	const std::size_t padded_freq_size = padded_size / 2 + 1;
 	const std::size_t orig_freq_size = blockSize / 2 + 1;
 
-	// Compute the normalized cross-correlation product.
-	// We'll compute it for frequency bins corresponding to the band,
-	// using the original FFT data (without any scaling or padding).
+	// Determine band start bins and band width (using reference band width).
+	std::size_t ref_start = m_config.getBands()[refBand].getStartBin(blockSize, m_config.getSampleRate());
+	std::size_t sig_start = m_config.getBands()[sigBand].getStartBin(blockSize, m_config.getSampleRate());
+	std::size_t ref_end = m_config.getBands()[refBand].getEndBin(blockSize, m_config.getSampleRate());
+	std::size_t band_width = ref_end - ref_start + 1;
+
+	// Clear and prepare correlation data.
 	m_correlationData.resize(orig_freq_size);
-	std::fill(m_correlationData.begin(), m_correlationData.end(), kiss_fft_cpx{ 0.0f, 0.0f });
+	std::fill(m_correlationData.begin(), m_correlationData.end(), kiss_fft_cpx { 0.0f, 0.0f });
 
-	// Determine band shift and width in Hz.
-	const double band_shift_Hz = m_bands[band2].m_startFreq - m_bands[band1].m_startFreq;
-	const double band_width_Hz = m_bands[band1].m_endFreq - m_bands[band1].m_startFreq + 1;
-
-	// Convert to frequency-bin indices.
-	const std::size_t band_shift = static_cast<std::size_t>(round(band_shift_Hz * blockSize / m_config.getSampleRate()));
-	const std::size_t band_width = static_cast<std::size_t>(round(band_width_Hz * blockSize / m_config.getSampleRate()));
-
-	// For each bin in the band, compute the normalized product:
-	// product = F1(k) * conj(F2(k)) / (|F1(k)||F2(k)|)
-	// This yields a unit-magnitude complex number whose phase is the phase difference.
+	// Compute the normalized cross-correlation product for the band.
 	for (std::size_t i = 0; i < band_width; i++) {
-		std::size_t bin1 = m_bands[band1].getStartBin(blockSize, m_config.getSampleRate()) + i;
-		std::size_t bin2 = bin1 + band_shift;
-		if (bin1 < orig_freq_size && bin2 <= m_bands[band2].getEndBin(blockSize, m_config.getSampleRate()) && bin2 < orig_freq_size) {
-			float real1 = fft_data[bin1].r;
-			float imag1 = fft_data[bin1].i;
-			float real2 = fft_data[bin2].r;
-			float imag2 = fft_data[bin2].i;
+		std::size_t bin_ref = ref_start + i;
+		std::size_t bin_sig = sig_start + i;
+		if (bin_ref < orig_freq_size && bin_sig < orig_freq_size) {
+			float real_ref = fft_data_ref[bin_ref].r;
+			float imag_ref = fft_data_ref[bin_ref].i;
+			float real_sig = fft_data_sig[bin_sig].r;
+			float imag_sig = fft_data_sig[bin_sig].i;
 
-			float mag1 = sqrtf(real1 * real1 + imag1 * imag1);
-			float mag2 = sqrtf(real2 * real2 + imag2 * imag2);
+			float mag_ref = sqrtf(real_ref * real_ref + imag_ref * imag_ref);
+			float mag_sig = sqrtf(real_sig * real_sig + imag_sig * imag_sig);
 
-			if (mag1 > 1e-10f && mag2 > 1e-10f) {
-				float scale = 1.0f / (mag1 * mag2);
-				// Compute F1 * conj(F2):
-				m_correlationData[bin1].r = (real1 * real2 + imag1 * imag2) * scale;
-				m_correlationData[bin1].i = (imag1 * real2 - real1 * imag2) * scale;
+			if (mag_ref > 1e-10f && mag_sig > 1e-10f) {
+				float scale = 1.0f / (mag_ref * mag_sig);
+				m_correlationData[bin_ref].r = (real_ref * real_sig + imag_ref * imag_sig) * scale;
+				// Multiply the imaginary component by -1 to reverse the delay sign.
+				m_correlationData[bin_ref].i = -(imag_ref * real_sig - real_ref * imag_sig) * scale;
 			}
 		}
 	}
 
-	// Create a frequency-domain buffer of the padded size and embed the product.
-	// For correct time-domain interpolation, multiply by the factor (padded_size / blockSize) = interpFactor.
-	// The rest of m_correlationDataPadded remains zero.
+	// Prepare padded frequency domain buffer.
 	m_correlationDataPadded.resize(padded_freq_size);
-	std::fill(m_correlationDataPadded.begin(), m_correlationDataPadded.end(), kiss_fft_cpx{ 0.0f, 0.0f });
-
+	std::fill(m_correlationDataPadded.begin(), m_correlationDataPadded.end(), kiss_fft_cpx { 0.0f, 0.0f });
 	for (std::size_t i = 0; i < orig_freq_size; i++) {
 		m_correlationDataPadded[i].r = m_correlationData[i].r * interpFactor;
 		m_correlationDataPadded[i].i = m_correlationData[i].i * interpFactor;
@@ -175,55 +183,47 @@ std::pair<float, float> FFTSyncCheck::calculateBandDelayFFT(const std::vector<ki
 		return std::make_pair(0.0f, 0.0f);
 	}
 
-	// SHIFT the data so that zero-lag is in the middle => index padded_size/2 corresponds to 0 delay
+	// SHIFT the data so that zero-lag is in the middle.
 	std::vector<float> shiftedData(padded_size);
 	for (std::size_t i = 0; i < padded_size; i++) {
-		// Shift by padded_size/2 forward
-		shiftedData[i] = m_paddedTimeData[(i + padded_size/2) % padded_size];
+		shiftedData[i] = m_paddedTimeData[(i + padded_size / 2) % padded_size];
 	}
 	m_paddedTimeData = shiftedData;
 
-	// Apply envelope smoothing to the correlation data
+	// Optionally apply lowpass smoothing to the envelope.
 	bool lowPassFilter = true;
 	if (lowPassFilter)
 		m_paddedTimeData = getSmoothEnvelope(m_paddedTimeData);
 
-	// Compute PSLR (Peak-to-Side-Lobe Ratio)
+	// Compute PSLR (Peak-to-Side-Lobe Ratio).
 	float pslr_db = computePSLR(m_paddedTimeData, padded_size / 64);
 
 	// Write out the correlation data for debugging if enabled
 	if (m_config.getDumpEnabled()) {
-		static int dump_count = 0;
-		if (band1 == 2) {
-			char filename[256];
-			snprintf(filename, sizeof(filename), "correlation_data_%zu_%zu_%05d.bin", band1, band2, dump_count);
-			FILE* f = fopen(filename, "wb");
-			if (f) {
-				// Save parameters
-				int32_t params[] = {
-					static_cast<int32_t>(padded_size),
-					static_cast<int32_t>(m_config.getSampleRate()),
-					static_cast<int32_t>(interpFactor)
-				};
-				fwrite(params, sizeof(params[0]), sizeof(params) / sizeof(params[0]), f);
-				// Save SHIFTED correlation data
-				fwrite(m_paddedTimeData.data(), sizeof(float), padded_size, f);
-				fclose(f);
-			}
-		}
-		if (band1 == m_config.getNumBands() - 1) {
-			dump_count++;
+		char filename[256];
+		snprintf(filename, sizeof(filename), "correlation_data_%zu_%zu_%05d.bin", refBand, sigBand, m_dumpCount);
+		FILE* f = fopen(filename, "wb");
+		if (f) {
+			// Save parameters
+			int32_t params[] = {
+				static_cast<int32_t>(padded_size),
+				static_cast<int32_t>(m_config.getSampleRate()),
+				static_cast<int32_t>(interpFactor)
+			};
+			fwrite(params, sizeof(params[0]), sizeof(params) / sizeof(params[0]), f);
+			// Save SHIFTED correlation data
+			fwrite(m_paddedTimeData.data(), sizeof(float), padded_size, f);
+			fclose(f);
 		}
 	}
 
-	// Find the peak. (Now the array is "centered"; if the true delay is zero, the max should appear near index padded_size/2.)
+	// Find the peak. (Now the array is "centered".)
 	float max_corr = 0.0f;
 	int max_idx = 0;
 	for (std::size_t i = 0; i < padded_size; i++) {
 		float val = m_paddedTimeData[i];
-		float abs_val = fabsf(val);
-		if (abs_val > max_corr) {
-			max_corr = abs_val;
+		if (fabsf(val) > max_corr) {
+			max_corr = fabsf(val);
 			max_idx = static_cast<int>(i);
 		}
 	}
@@ -246,140 +246,230 @@ std::pair<float, float> FFTSyncCheck::calculateBandDelayFFT(const std::vector<ki
 				}
 			}
 		}
-
-		// Merge main_idx with opposite peak index if found
 		if (opposite_peak_idx >= 0) {
-			if (main_val > 0.0f) {
+			if (main_val > 0.0f)
 				max_idx = static_cast<int>(roundf(0.6f * max_idx + 0.4f * opposite_peak_idx));
-			} else {
+			else
 				max_idx = static_cast<int>(roundf(0.4f * max_idx + 0.6f * opposite_peak_idx));
-			}
 		}
 	}
 
-	// Parabolic interpolation around max_idx
+	// Parabolic interpolation around max_idx.
 	float alpha = m_paddedTimeData[(max_idx - 1 + padded_size) % padded_size];
-	float beta  = m_paddedTimeData[max_idx];
+	float beta = m_paddedTimeData[max_idx];
 	float gamma = m_paddedTimeData[(max_idx + 1) % padded_size];
 	float p = 0.5f * (alpha - gamma) / (alpha - 2.0f * beta + gamma);
 	float interpolated_idx = static_cast<float>(max_idx) + p;
 
-	// Convert that index to a delay in milliseconds.
-	// If "interpolated_idx" == padded_size/2 => delay = 0
-	// < padded_size/2 => negative delay
-	// > padded_size/2 => positive delay
+	// Convert index to delay in milliseconds.
 	float delay = (interpolated_idx - (float)(padded_size / 2)) / (static_cast<float>(m_config.getSampleRate()) * interpFactor);
 	delay *= 1000.0f; // ms
+
 	return std::make_pair(delay, pslr_db);
 }
 
-
+/**
+ * @brief Print comprehensive delay statistics for each channel assignment.
+ *
+ * This function now outputs the channel assignment details (reference and signal channels and bands)
+ * along with the expected delay, measured delay, error and confidence.
+ *
+ * @param expected_delays_ms Optional vector of expected delays in milliseconds for each channel assignment.
+ */
 void FFTSyncCheck::printDelayStats(const std::vector<float>& expected_delays_ms)
 {
 	DBG_INFO("=== Delay Statistics and Measurements ===");
-	DBG_INFO("Band | Expected (ms) | Delay (ms) | Error (ms) | Confidence | Status");
-	DBG_INFO("-----+--------------+------------+-----------+-----------+-------------");
+	DBG_INFO("Delay channel[band] -> channel[band] (ms) | Expected (ms) | Delay (ms) | Error (ms) | Confidence | Status");
+	DBG_INFO("-----------------------------------------------+---------------+------------+------------+------------+-------------");
 
-	for (std::size_t i = 1; i < m_config.getNumBands(); i++) {
+	for (std::size_t i = 0; i < m_delayStats.size(); i++) {
+
+		// Skip if the assignment is to the same channel and band.
+		const auto &assignment = m_channelAssignments[i];
+		if (assignment.refChannel == assignment.sigChannel && assignment.refBand == assignment.sigBand) {
+			continue;
+		}
+
 		float delay_ms = m_delayStats[i].m_filteredDelay;
 		float conf = m_delayStats[i].m_confidence;
-		const char *status = "OK          ";
+		const char *status = "OK         ";
 		if (conf < 0.5f)
-			status = "UNRELIABLE  ";
-
+			status = "UNRELIABLE ";
 		float expected = 0.0f;
 		float error = delay_ms;
-		if (!expected_delays_ms.empty() && i < (std::size_t)expected_delays_ms.size()) {
+		if (!expected_delays_ms.empty() && i < expected_delays_ms.size()) {
 			expected = expected_delays_ms[i];
 			error = delay_ms - expected;
 		}
 
-		DBG_INFO(std::setw(4) << i
-			<< " | " << std::showpos << std::setw(11) << std::fixed << std::setprecision(3) << expected
-			<< " | " << std::showpos << std::setw(9)  << std::fixed << std::setprecision(3) << delay_ms
-			<< " | " << std::showpos << std::setw(8)  << std::fixed << std::setprecision(3) << error << std::noshowpos
-			<< " | " << std::setw(9)  << std::fixed << std::setprecision(3) << conf
+		std::string assignmentStr = "N/A";
+		if (i < m_channelAssignments.size()) {
+			const auto &assignment = m_channelAssignments[i];
+			assignmentStr = ""
+					+ std::to_string(assignment.refChannel) + "["
+					+ std::to_string(assignment.refBand) + "] -> "
+					+ std::to_string(assignment.sigChannel) + "["
+					+ std::to_string(assignment.sigBand) + "]";
+		}
+
+		DBG_INFO(std::setw(40) << assignmentStr
+			<< " | " << std::showpos << std::setw(13) << std::fixed << std::setprecision(3) << expected
+			<< " | " << std::showpos << std::setw(10) << std::fixed << std::setprecision(3) << delay_ms
+			<< " | " << std::showpos << std::setw(10) << std::fixed << std::setprecision(3) << error << std::noshowpos
+			<< " | " << std::setw(10) << std::fixed << std::setprecision(3) << conf
 			<< " | " << status);
 	}
 
-	DBG_INFO("Band Details:");
-	for (std::size_t i = 1; i < m_config.getNumBands(); i++) {
-		float f_start = m_bands[i].getStartFreq();
-		float f_end = m_bands[i].getEndFreq();
-
-		DBG_INFO("Band " << i
-			<< ": "
-			<< std::fixed << std::setprecision(0) << f_start
-			<< " Hz - "
-			<< std::fixed << std::setprecision(0) << f_end
-			<< " Hz");
-	}
 	DBG_INFO("");
 }
 
 void FFTSyncCheck::processSampleBlock(const std::vector<float>& samples)
 {
-	// make sure the processing buffer is the same size as the block size
-	if (m_processingBuffer.size() != m_config.getBlockSize()) {
-		m_processingBuffer.resize(m_config.getBlockSize());
+	// Ensure the number of samples is a multiple of the number of channels.
+	assert((samples.size() % m_numInputChannels) == 0);
+
+	// 'samples' are assumed to be interleaved across m_numInputChannels.
+	const std::size_t blockSize     = m_config.getBlockSize();
+	const std::size_t numFrames     = samples.size() / m_numInputChannels;
+	const std::size_t desiredCapacity = blockSize * 2;
+
+	// Ensure each per–channel processing buffer has sufficient capacity.
+	for (std::size_t ch = 0; ch < m_numInputChannels; ch++) {
+		if (m_channelProcessingBuffers[ch].size() < desiredCapacity) {
+			m_channelProcessingBuffers[ch].resize(desiredCapacity, 0.0f);
+		}
 	}
 
-	std::size_t processed = 0;
+	std::size_t processedFrames = 0;
+	// Process the input frames in a loop.
+	while (processedFrames < numFrames) {
+		// Determine how many new frames we can copy without overrunning a block.
+		std::size_t framesToCopy = std::min(numFrames - processedFrames, blockSize - m_processingBufferFilled);
 
-	while (processed < samples.size()) {
+		// Deinterleave and copy the frames into each channel's buffer.
+		for (std::size_t ch = 0; ch < m_numInputChannels; ch++) {
+			for (std::size_t i = 0; i < framesToCopy; i++) {
+				m_channelProcessingBuffers[ch][m_processingBufferFilled + i] =
+					samples[(processedFrames + i) * m_numInputChannels + ch];
+			}
+		}
+		m_processingBufferFilled += framesToCopy;
+		processedFrames += framesToCopy;
 
-		// Copy new samples into processing buffer
-		size_t samplesToProcess = std::min(samples.size() - processed, m_config.getBlockSize() - m_processingBufferFilled);
-		std::copy(samples.begin() + processed, samples.begin() + processed + samplesToProcess, m_processingBuffer.begin() + m_processingBufferFilled);
-		m_processingBufferFilled += samplesToProcess;
-		processed += samplesToProcess;
+		// Process full blocks as long as there is enough data.
+		while (m_processingBufferFilled >= blockSize) {
+			// Apply the analysis window and compute the FFT for each channel used in processing.
+			const auto &window = m_windowGenerator->getAnalysisWindow();
+			for (std::size_t ch = 0; ch < m_numInputChannels; ch++) {
+				// Only process channels that are used in one or more channel assignments.
+				bool channelUsed = false;
+				for (const auto &assign : m_channelAssignments) {
+					if (assign.refChannel == ch || assign.sigChannel == ch) {
+						channelUsed = true;
+						break;
+					}
+				}
+				if (!channelUsed)
+					continue;
 
-		// Process when we have a full block
-		if (m_processingBufferFilled >= m_config.getBlockSize()) {
-			// Apply analysis window
-			const auto& window = m_windowGenerator->getAnalysisWindow();
-			for (size_t i = 0; i < m_config.getBlockSize(); i++) {
-				m_windowedBuffer[i] = m_processingBuffer[i] * window[i];
+				// Apply the analysis window to the first 'blockSize' samples.
+				for (std::size_t i = 0; i < blockSize; i++) {
+					m_tempWindowedBuffers[ch][i] = m_channelProcessingBuffers[ch][i] * window[i];
+				}
+				// Compute FFT on the windowed data. The per–channel FFT output is stored in m_channelFFTs[ch].
+				m_fftProcessor->forward(m_tempWindowedBuffers[ch], m_channelFFTs[ch]);
 			}
 
-			// Perform FFT
-			std::vector<kiss_fft_cpx> fftData(m_config.getBlockSize() / 2 + 1);
-			m_fftProcessor->forward(m_windowedBuffer, fftData);
+			// Process delay estimation for each channel assignment.
+			for (std::size_t i = 0; i < m_channelAssignments.size(); i++) {
+				const auto &assign = m_channelAssignments[i];
 
-			// Calculate delays relative to band 0 using the FFT data
-			for (std::size_t i = 1; i < m_config.getNumBands(); i++) {
-				auto [delay, pslr] = calculateBandDelayFFT(fftData, i, 0);
+				// if makes no sense to calculate cross-correlation for the same channel and band
+				if (assign.refChannel == assign.sigChannel && assign.refBand == assign.sigBand) {
+					m_delayStats[i].update(0.0f, 0.0f);
+					continue;
+				}
+
+				// Get FFT data for the reference and signal channels.
+				const auto &fftDataRef = m_channelFFTs[assign.refChannel];
+				const auto &fftDataSig = m_channelFFTs[assign.sigChannel];
+
+				// Calculate delay and PSLR using the chosen bands (assign.refBand and assign.sigBand).
+				// (Assumes calculateBandDelayFFT() is appropriately overloaded.)
+				auto [delay, pslr] = calculateBandDelayFFT(fftDataRef, fftDataSig, assign.refBand, assign.sigBand);
 				m_delayStats[i].update(delay, pslr);
 			}
 
-			// consume 'hopsize' worth of samples from the buffer
-			std::copy(m_processingBuffer.begin() + m_config.getHopSize(), m_processingBuffer.begin() + m_config.getBlockSize(), m_processingBuffer.begin());
-			m_processingBufferFilled -= m_config.getHopSize();
+			if (m_config.getDumpEnabled())
+				m_dumpCount++;
+
+			// Remove 'hopSize' worth of samples from the beginning of each channel's processing buffer.
+			std::size_t hop = m_config.getHopSize();
+			for (std::size_t ch = 0; ch < m_numInputChannels; ch++) {
+				std::move(m_channelProcessingBuffers[ch].begin() + hop,
+				          m_channelProcessingBuffers[ch].begin() + m_processingBufferFilled,
+				          m_channelProcessingBuffers[ch].begin());
+			}
+			m_processingBufferFilled -= hop;
 		}
 	}
 }
 
-float FFTSyncCheck::getFilteredDelay(std::size_t band)
+float FFTSyncCheck::getFilteredDelay(std::size_t assignment)
 {
-	if (band > 0 && band < m_config.getNumBands()) {
-		return m_delayStats[band].m_filteredDelay;
+	if (assignment < m_delayStats.size()) {
+		return m_delayStats[assignment].m_filteredDelay;
 	}
 	return 0.0f;
 }
 
 /**
- * @brief Get all delay statistics
- * @return Vector of tuples containing filtered delay, confidence and PSLR for each band
+ * @brief Get all delay statistics together with the channel assignment details.
+ *
+ * Each returned tuple contains:
+ *   - ChannelAssignment: details of the channel assignment (refChannel, refBand, sigChannel, sigBand)
+ *   - Filtered delay (float)
+ *   - Confidence (float)
+ *   - Filtered PSLR (float)
+ *
+ * This makes it easier to link each delay measurement to its original channel assignment.
+ *
+ * @return Vector of tuples with channel assignment and delay statistics.
  */
-std::vector<std::tuple<float, float, float>> FFTSyncCheck::getDelayStats() const
+std::vector<std::tuple<FFTSyncCheck::ChannelAssignment, float, float, float>> FFTSyncCheck::getDelayStats() const
 {
-	std::vector<std::tuple<float, float, float>> delays;
-	for (std::size_t i = 0; i < m_config.getNumBands(); i++) {
-		delays.push_back(std::make_tuple(
-			m_delayStats[i].m_filteredDelay,
-			m_delayStats[i].m_confidence,
-			m_delayStats[i].m_filteredPSLR
-		));
+	std::vector<std::tuple<ChannelAssignment, float, float, float>> delays;
+	delays.reserve(m_delayStats.size());
+	for (std::size_t i = 0; i < m_delayStats.size(); i++) {
+		ChannelAssignment assignment;
+		if (i < m_channelAssignments.size()) {
+			assignment = m_channelAssignments[i];
+		}
+		delays.emplace_back(assignment, m_delayStats[i].m_filteredDelay, m_delayStats[i].m_confidence, m_delayStats[i].m_filteredPSLR);
 	}
 	return delays;
+}
+
+void FFTSyncCheck::setMultiChannelMode(const std::size_t numChannels)
+{
+	// m_multiChannelMode = enabled;
+	m_numInputChannels = numChannels;
+
+	// Initialize per-channel processing buffers.
+	const size_t capacity = m_config.getBlockSize() * 2;
+	m_channelProcessingBuffers.resize(m_numInputChannels);
+	m_tempWindowedBuffers.resize(m_numInputChannels);
+	m_channelFFTs.resize(m_numInputChannels);
+	for (std::size_t ch = 0; ch < m_numInputChannels; ch++) {
+		m_channelProcessingBuffers[ch].resize(capacity, 0.0f);
+		m_tempWindowedBuffers[ch].resize(m_config.getBlockSize(), 0.0f);
+		m_channelFFTs[ch].resize(m_config.getBlockSize() / 2 + 1);
+	}
+}
+
+void FFTSyncCheck::setChannelAssignments(const std::vector<ChannelAssignment>& assignments)
+{
+	m_channelAssignments = assignments;
+	// Resize delay statistics vector to match the number of channel assignments.
+	m_delayStats.resize(assignments.size());
 }

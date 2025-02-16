@@ -24,33 +24,49 @@
 
 static volatile bool g_running = true;
 
+/**
+ * @brief Application configuration parameters.
+ */
 struct AppConfig
 {
 #ifdef BUILDTYPE_PC
-	std::string captureDevice = "file://untitled.wav";
-	// std::string captureDevice = "file://test_signal_mixed.wav";
+	std::string		captureDevice = "hw:1"; // file://out.wav";
 #else
-	std::string captureDevice = "default";
+	std::string		captureDevice = "default";
 #endif
-	unsigned int sampleRate = 48000;
+	unsigned int	sampleRate = 48000;
 	snd_pcm_format_t format = SND_PCM_FORMAT_S16_LE;
-	std::string outputFile;
-	bool useColors = true;
-	unsigned int channels = 1;
-	unsigned int periodSize = 1024;
-	unsigned int periods = 2;
-	unsigned int blockSize = SyncCheckConfig::DEFAULT_BLOCK_SIZE;
-	unsigned int overlapPercent = SyncCheckConfig::DEFAULT_OVERLAP_PERCENT;
-	unsigned int numBands = SyncCheckConfig::DEFAULT_NUM_BANDS;
-	unsigned int interpFactor = SyncCheckConfig::DEFAULT_INTERP_FACTOR;
-	unsigned int startFreq = 14000;
-	unsigned int freqRange = 8000;
-	unsigned int bandSep = 500;
-	int processChannel = -1;
-	std::string dumpFile;
-	float statsRefreshRate = 1.0f;  // Stats refresh rate in seconds
-	std::set<int> bandsOfInterest;  // Bands to include in reports (empty = all bands)
-	bool dumpCorrelation = false;
+	std::string		outputFile;
+	bool			useColors = true;
+	unsigned int	channels = 2;      // Physical channel count
+	unsigned int	periodSize = 1024;
+	unsigned int	periods = 2;
+	unsigned int	blockSize = SyncCheckConfig::DEFAULT_BLOCK_SIZE;
+	unsigned int	overlapPercent = SyncCheckConfig::DEFAULT_OVERLAP_PERCENT;
+	unsigned int	numBands = SyncCheckConfig::DEFAULT_NUM_BANDS;
+	unsigned int	interpFactor = SyncCheckConfig::DEFAULT_INTERP_FACTOR;
+	unsigned int	startFreq = 18000;
+	unsigned int	freqRange = 4000;
+	unsigned int	bandSep = 100;
+	std::string		dumpFile;
+	float			statsRefreshRate = 1.0f;  // Stats refresh rate in seconds
+	bool			dumpCorrelation = false;
+
+	/**
+	 * @brief Unified source mapping.
+	 *
+	 * Provide "mix" to mix all physical channels or a CSV list of mappings.
+	 * Each mapping is either a single number (physical channel, defaults to band 0)
+	 * or in the form "physical:band" (e.g. "0:0,1:1" assigns physical channels 0 and 1
+	 * to band 0 and band 1 respectively).
+	 */
+	std::string		sources;
+
+	/**
+	 * @brief Flag indicating whether to capture each physical channel individually.
+	 * If false, capture code will mix all channels.
+	 */
+	bool			multichannel = false;
 };
 
 void signalHandler(int signum)
@@ -79,19 +95,32 @@ public:
 		}
 	}
 
-	void visualizeDelays(const std::vector<std::tuple<float, float, float>> &estimates, const std::set<int> &bandsOfInterest)
+	/**
+	 * @brief Visualize delay statistics for each channel assignment.
+	 *
+	 * Outputs channel assignment details along with delay, confidence, and PSLR.
+	 *
+	 * @param estimates Vector of tuples containing (ChannelAssignment, delay, confidence, PSLR) for each assignment.
+	 */
+	void visualizeDelays(const std::vector<std::tuple<FFTSyncCheck::ChannelAssignment, float, float, float>> &estimates)
 	{
 		std::stringstream ss;
 		ss << std::fixed << std::setprecision(3);
-		ss << "Delays (ms):\n";
 
 		// Calculate center position
 		int center = m_width / 2;
+		ss << "Delay channel[band] -> channel[band] (ms), each division = " << (m_maxDelay / (center - 1)) << " ms\n";
 
 		for (size_t i = 0; i < estimates.size(); ++i) {
-			double delay = std::get<0>(estimates[i]);
-			double confidence = std::get<1>(estimates[i]);
-			double pslr = std::get<2>(estimates[i]);
+			const FFTSyncCheck::ChannelAssignment &assignment = std::get<0>(estimates[i]);
+			const double delay = std::get<1>(estimates[i]);
+			const double confidence = std::get<2>(estimates[i]);
+			const double pslr = std::get<3>(estimates[i]);
+
+			// Skip if the assignment is to the same channel and band.
+			if (assignment.refChannel == assignment.sigChannel && assignment.refBand == assignment.sigBand) {
+				continue;
+			}
 
 			std::string color;
 			if (m_useColors) {
@@ -103,53 +132,65 @@ public:
 					color = ANSI_COLOR_RED;
 			}
 
-			// Numeric display with fixed widths
-			if (bandsOfInterest.empty() || bandsOfInterest.find(i) != bandsOfInterest.end()) {
-				ss << (m_useColors ? color : "") << "Band " << std::setw(2) << (i + 1) << ": "
-				   << std::setw(8) << delay << " ms [PSLR: "
-				   << std::fixed << std::setprecision(3) << std::setw(6) << pslr  // Fixed width of 6 for PSLR
-				   << " dB, confidence: " << std::setw(6) << confidence << "]"     // Fixed width of 6 for confidence
-				   << (m_useColors ? ANSI_COLOR_RESET : "") << " |";
+			std::string assignStr = ""
+								+ std::to_string(assignment.refChannel) + "["
+								+ std::to_string(assignment.refBand) + "] -> "
+								+ std::to_string(assignment.sigChannel) + "["
+								+ std::to_string(assignment.sigBand) + "]";
 
-				// ASCII visualization
-				int position = center + static_cast<int>((delay / m_maxDelay) * (center - 1));
-				position = std::max(0, std::min(static_cast<int>(m_width - 1), position));
+			// Updated label: output "Assignment X" always.
+			ss << (m_useColors ? color : "") << assignStr << ": "
+			   << std::setw(8) << delay << " ms [PSLR: "
+			   << std::fixed << std::setprecision(3) << std::setw(6) << pslr  // Fixed width of 6 for PSLR
+			   << " dB, confidence: " << std::setw(6) << confidence << "]"
+			   << (m_useColors ? ANSI_COLOR_RESET : "") << " |";
 
-				for (unsigned int j = 0; j < m_width; ++j) {
-					if (j == position) {
-						ss << (m_useColors ? color : "") << "*" << (m_useColors ? ANSI_COLOR_RESET : "");
-					} else if (j == center) {
-						ss << "|";  // Center mark
-					} else {
-						ss << "-";
-					}
+			// ASCII visualization
+			int position = center + static_cast<int>((delay / m_maxDelay) * (center - 1));
+			position = std::max(0, std::min(static_cast<int>(m_width - 1), position));
+
+			for (unsigned int j = 0; j < m_width; ++j) {
+				if (j == position) {
+					ss << (m_useColors ? color : "") << "*" << (m_useColors ? ANSI_COLOR_RESET : "");
+				} else if (j == center) {
+					ss << "|";  // Center mark
+				} else {
+					ss << "-";
 				}
-				ss << "|\n";
 			}
+			ss << "|\n";
 		}
-		ss << "\nScale: each division = " << (m_maxDelay / (center - 1)) << " ms\n\n";
 
 		// Output to console
-		std::cout << ss.str() << std::flush;
+		std::cout << ss.str() << std::endl << std::flush;
 
 		// Output to file if opened
 		if (m_outputFile.is_open()) {
 			m_outputFile << std::setw(6) << std::setfill(' ') << m_dumpId++ << ", ";
 			for (size_t i = 0; i < estimates.size(); ++i) {
+				const FFTSyncCheck::ChannelAssignment &assignment = std::get<0>(estimates[i]);
+				const double delay = std::get<1>(estimates[i]);
+				const double confidence = std::get<2>(estimates[i]);
+				const double pslr = std::get<3>(estimates[i]);
 
-				if (bandsOfInterest.empty() || bandsOfInterest.find(i) != bandsOfInterest.end()) {
-					const double delay = std::get<0>(estimates[i]);
-					const double confidence = std::get<1>(estimates[i]);
-					const double pslr = std::get<2>(estimates[i]);
-
-					m_outputFile << "Band " << std::setw(1) << (i + 1) << ": "
-						<< std::fixed << std::setprecision(3) << std::setw(8) << delay
-						<< " ms, confidence: " << std::setw(5) << confidence << ", PSLR: "
-						<< std::fixed << std::setprecision(3) << std::setw(5) << pslr;
-
-					if (i < estimates.size() - 1)
-						m_outputFile << ",";
+				// Skip if the assignment is to the same channel and band.
+				if (assignment.refChannel == assignment.sigChannel && assignment.refBand == assignment.sigBand) {
+					continue;
 				}
+
+				std::string assignStr = ""
+								+ std::to_string(assignment.refChannel) + "["
+								+ std::to_string(assignment.refBand) + "] -> "
+								+ std::to_string(assignment.sigChannel) + "["
+								+ std::to_string(assignment.sigBand) + "]";
+
+				m_outputFile << "Assignment " << assignStr << ": "
+				             << std::fixed << std::setprecision(3) << std::setw(8) << delay
+				             << " ms, confidence: " << std::setw(5) << confidence << ", PSLR: "
+				             << std::fixed << std::setprecision(3) << std::setw(5) << pslr;
+
+				if (i < estimates.size() - 1)
+					m_outputFile << ", ";
 			}
 			m_outputFile << std::endl;
 		}
@@ -166,7 +207,6 @@ void printUsage(const char *programName)
 			  << "  -o, --output=FILE      Output statistics to file\n"
 			  << "  -n, --no-colors        Disable ANSI colors in output\n"
 			  << "  -c, --channels=NUM     Number of input channels (default: 1)\n"
-			  << "  -s  --process-ch=NUM   Channel to process (0-based, default: 0)\n"
 			  << "  -p, --period-size=NUM  Period size (default: 1024)\n"
 			  << "      --dump-correlation Enable correlation data dumping\n"
 			  << "      --block-size=NUM   FFT block size (default: 8192)\n"
@@ -176,9 +216,9 @@ void printUsage(const char *programName)
 			  << "      --start-freq=NUM   Start frequency in Hz (default: 18000)\n"
 			  << "      --freq-range=NUM   Frequency range in Hz (default: 4000)\n"
 			  << "      --band-sep=NUM     Band separation in Hz (default: 100)\n"
-			  << "      --bands-of-interest=LIST  Comma-separated list of band indices to report (default: all)\n"
 			  << "      --refresh-rate=NUM Statistics refresh rate in seconds (default: 1.0)\n"
 			  << "      --dump=FILE        Dump captured audio to WAV file\n"
+			  << "  -S, --sources=MAPPINGS   Specify input mapping. Use \"mix\" to mix all channels or provide a comma-separated list (e.g. \"0:0,1:1\" or \"0,1\").\n"
 			  << "  -h, --help            Show this help message\n";
 }
 
@@ -196,27 +236,27 @@ snd_pcm_format_t parseFormat(const std::string &format)
 std::pair<bool, AppConfig> parseCommandLine(int argc, char *argv[])
 {
 	AppConfig config;
+
 	static struct option long_options[] = {
-		{ "device", required_argument, 0, 'd' },
-		{ "rate", required_argument, 0, 'r' },
-		{ "format", required_argument, 0, 'f' },
-		{ "output", required_argument, 0, 'o' },
-		{ "no-colors", no_argument, 0, 'n' },
-		{ "channels", required_argument, 0, 'c' },
-		{ "process-ch", required_argument, 0, 's' },
-		{ "period-size", required_argument, 0, 'p' },
-		{ "block-size", required_argument, 0, 1 },
-		{ "overlap", required_argument, 0, 2 },
-		{ "bands", required_argument, 0, 3 },
-		{ "interp", required_argument, 0, 4 },
-		{ "dump", required_argument, 0, 5 },
-		{ "start-freq", required_argument, 0, 6 },
-		{ "freq-range", required_argument, 0, 7 },
-		{ "band-sep", required_argument, 0, 8 },
-		{ "refresh-rate", required_argument, 0, 9 },
-		{ "bands-of-interest", required_argument, 0, 10 },
-		{ "dump-correlation", no_argument, 0, 11 },
-		{ "help", no_argument, 0, 'h' },
+		{ "device",			required_argument, 0, 'd' },
+		{ "rate",			required_argument, 0, 'r' },
+		{ "format",			required_argument, 0, 'f' },
+		{ "output",			required_argument, 0, 'o' },
+		{ "no-colors",		no_argument,	   0, 'n' },
+		{ "channels",		required_argument, 0, 'c' },
+		{ "period-size",	required_argument, 0, 'p' },
+		{ "block-size",		required_argument, 0, 1 },
+		{ "overlap",		required_argument, 0, 2 },
+		{ "bands",			required_argument, 0, 3 },
+		{ "interp",			required_argument, 0, 4 },
+		{ "dump",			required_argument, 0, 5 },
+		{ "start-freq",		required_argument, 0, 6 },
+		{ "freq-range",		required_argument, 0, 7 },
+		{ "band-sep",		required_argument, 0, 8 },
+		{ "refresh-rate",	required_argument, 0, 9 },
+		{ "dump-correlation", no_argument,	  0, 10 },
+		{ "sources",		required_argument, 0, 'S' },
+		{ "help",			no_argument,	   0, 'h' },
 		{ 0, 0, 0, 0 }
 	};
 
@@ -248,9 +288,10 @@ std::pair<bool, AppConfig> parseCommandLine(int argc, char *argv[])
 		case 'p':
 			config.periodSize = std::stoi(optarg);
 			break;
-		case 's': // process-ch
-			config.processChannel = std::stoi(optarg);
+		case 'S': {
+			config.sources = optarg;
 			break;
+		}
 		case 1: // block-size
 			config.blockSize = std::stoi(optarg);
 			break;
@@ -286,22 +327,7 @@ std::pair<bool, AppConfig> parseCommandLine(int argc, char *argv[])
 				return { false, config };
 			}
 			break;
-		case 10: // bands-of-interest
-			{
-				std::string bands_str(optarg);
-				std::stringstream ss(bands_str);
-				std::string band;
-				while (std::getline(ss, band, ',')) {
-					int band_idx = std::stoi(band);
-					if (band_idx < 1) {
-						DBG_ERROR("Invalid band index " << band_idx << ". Must be in range from 1 to " << config.numBands);
-						return { false, config };
-					}
-					config.bandsOfInterest.insert(band_idx - 1);
-				}
-			}
-			break;
-		case 11:
+		case 10:
 			config.dumpCorrelation = true;
 			break;
 		case 'h':
@@ -309,12 +335,6 @@ std::pair<bool, AppConfig> parseCommandLine(int argc, char *argv[])
 		default:
 			return { false, config };
 		}
-	}
-
-	// Validate process channel
-	if (config.processChannel >= (int)config.channels) {
-		DBG_ERROR("Invalid process channel. Must be less than number of channels");
-		return { false, config };
 	}
 
 	return { true, config };
@@ -357,12 +377,6 @@ public:
 		m_config.channels = m_sfInfo.channels;
 		m_config.sampleRate = m_sfInfo.samplerate;
 
-		if (m_config.processChannel >= (int)m_config.channels) {
-			DBG_ERROR("Requested channel " << m_config.processChannel << " exceeds number of channels in file (" << m_config.channels << ")");
-			sf_close(m_file);
-			return;
-		}
-
 		m_buffer.resize(m_config.periodSize * m_config.channels);
 		m_initialized = true;
 
@@ -383,9 +397,17 @@ public:
 	}
 
 	std::vector<float> captureBlock() override {
-		std::vector<float> output(m_config.periodSize);
+		// Depending on the mode we return either mixed mono samples or raw interleaved samples.
+		// In mix mode: we mix all channels to a single stream.
+		// In multichannel mode: we return all channels (raw interleaved).
 
+		std::vector<float> output;
 		if (!isInitialized()) {
+			// Return silence: periodSize samples for mix mode, periodSize * channels for multichannel mode.
+			if (m_config.multichannel)
+				output.resize(m_config.periodSize * m_config.channels, 0.0f);
+			else
+				output.resize(m_config.periodSize, 0.0f);
 			return output;
 		}
 
@@ -393,29 +415,36 @@ public:
 
 		if (framesRead == 0) {
 			g_running = false; // End of file
+			if (m_config.multichannel)
+				output.resize(m_config.periodSize * m_config.channels, 0.0f);
+			else
+				output.resize(m_config.periodSize, 0.0f);
 			return output;
 		}
 
-		if (m_config.processChannel < 0) {
-			// Mix all channels
-			for (sf_count_t i = 0; i < framesRead; ++i) {
-				for (unsigned int ch = 0; ch < m_config.channels; ++ch) {
-					output[i] += m_buffer[i * m_config.channels + ch];
-				}
+		// If in multichannel mode, return the raw interleaved data.
+		if (m_config.multichannel) {
+			std::vector<float> multiOutput(framesRead * m_config.channels, 0.0f);
+			std::copy(m_buffer.begin(), m_buffer.begin() + framesRead * m_config.channels, multiOutput.begin());
+			if (framesRead < static_cast<sf_count_t>(m_config.periodSize)) {
+				std::fill(multiOutput.begin() + framesRead * m_config.channels, multiOutput.end(), 0.0f);
 			}
+			return multiOutput;
 		} else {
-			// Extract the requested channel
+			// Otherwise (mix mode), mix all channels to obtain one mono sample per frame.
+			std::vector<float> mixedOutput(framesRead, 0.0f);
 			for (sf_count_t i = 0; i < framesRead; ++i) {
-				output[i] = m_buffer[i * m_config.channels + m_config.processChannel];
+				float sum = 0.0f;
+				for (unsigned int ch = 0; ch < m_config.channels; ++ch) {
+					sum += m_buffer[i * m_config.channels + ch];
+				}
+				mixedOutput[i] = sum / m_config.channels;
 			}
+			if (framesRead < static_cast<sf_count_t>(m_config.periodSize)) {
+				mixedOutput.resize(m_config.periodSize, 0.0f);
+			}
+			return mixedOutput;
 		}
-
-		// Zero-pad if we read less than requested
-		if (framesRead < m_config.periodSize) {
-			std::fill(output.begin() + framesRead, output.end(), 0.0f);
-		}
-
-		return output;
 	}
 
 	unsigned int getSampleRate() const override
@@ -516,10 +545,15 @@ public:
 
 	std::vector<float> captureBlock() override
 	{
-		std::vector<float> floatBuffer(m_config.periodSize);
-
+		// In mix mode we will mix all physical channels and return a mono stream.
+		// In multichannel mode we return raw interleaved data.
+		std::vector<float> floatBuffer;
 		if (!isInitialized()) {
 			DBG_ERROR("AlsaCapture not properly initialized");
+			if (m_config.multichannel)
+				floatBuffer.resize(m_config.periodSize * m_config.channels, 0.0f);
+			else
+				floatBuffer.resize(m_config.periodSize, 0.0f);
 			return floatBuffer;
 		}
 
@@ -527,70 +561,81 @@ public:
 		if (err == -EPIPE) {
 			DBG_WARN("Buffer overrun detected, recovering...");
 			snd_pcm_prepare(m_handle);
+			if (m_config.multichannel)
+				floatBuffer.resize(m_config.periodSize * m_config.channels, 0.0f);
+			else
+				floatBuffer.resize(m_config.periodSize, 0.0f);
 			return floatBuffer;
-		}
-		else if (err < 0) {
+		} else if (err < 0) {
 			DBG_ERROR("Error reading from PCM device: " << std::string(snd_strerror(err)));
+			if (m_config.multichannel)
+				floatBuffer.resize(m_config.periodSize * m_config.channels, 0.0f);
+			else
+				floatBuffer.resize(m_config.periodSize, 0.0f);
 			return floatBuffer;
 		}
 
 		const uint8_t *src = m_buffer.data();
-		for (size_t i = 0; i < m_config.periodSize; ++i) {
-			float sample = 0.0f;
 
-			if (m_config.processChannel < 0) {
-				// Mix all channels
+		if (m_config.multichannel) {
+			// Process and return each channel individually.
+			std::vector<float> multiBuffer(err * m_config.channels, 0.0f);
+			for (size_t i = 0; i < static_cast<size_t>(err); ++i) {
 				for (unsigned int ch = 0; ch < m_config.channels; ++ch) {
 					switch (m_config.format) {
-					case SND_PCM_FORMAT_S16_LE: {
-						const int16_t *samples = reinterpret_cast<const int16_t *>(src);
-						sample += samples[i * m_config.channels + ch] / 32768.0f;
-						break;
+						case SND_PCM_FORMAT_S16_LE: {
+							const int16_t *samples = reinterpret_cast<const int16_t *>(src);
+							multiBuffer[i * m_config.channels + ch] = samples[i * m_config.channels + ch] / 32768.0f;
+							break;
+						}
+						case SND_PCM_FORMAT_S32_LE: {
+							const int32_t *samples = reinterpret_cast<const int32_t *>(src);
+							multiBuffer[i * m_config.channels + ch] = samples[i * m_config.channels + ch] / 2147483648.0f;
+							break;
+						}
+						case SND_PCM_FORMAT_FLOAT_LE: {
+							const float *samples = reinterpret_cast<const float *>(src);
+							multiBuffer[i * m_config.channels + ch] = samples[i * m_config.channels + ch];
+							break;
+						}
+						default:
+							DBG_ERROR("Unsupported format");
+							return multiBuffer;
 					}
-					case SND_PCM_FORMAT_S32_LE: {
-						const int32_t *samples = reinterpret_cast<const int32_t *>(src);
-						sample += samples[i * m_config.channels + ch] / 2147483648.0f;
-						break;
-					}
-					case SND_PCM_FORMAT_FLOAT_LE: {
-						const float *samples = reinterpret_cast<const float *>(src);
-						sample += samples[i * m_config.channels + ch];
-						break;
-					}
-					default:
-						DBG_ERROR("Unsupported format");
-						return floatBuffer;
-					}
-				}
-				// Normalize mixed channels
-				sample /= m_config.channels;
-				floatBuffer[i] = sample;
-			} else {
-				// Extract single channel
-				switch (m_config.format) {
-				case SND_PCM_FORMAT_S16_LE: {
-					const int16_t *samples = reinterpret_cast<const int16_t *>(src);
-					floatBuffer[i] = samples[i * m_config.channels + m_config.processChannel] / 32768.0f;
-					break;
-				}
-				case SND_PCM_FORMAT_S32_LE: {
-					const int32_t *samples = reinterpret_cast<const int32_t *>(src);
-					floatBuffer[i] = samples[i * m_config.channels + m_config.processChannel] / 2147483648.0f;
-					break;
-				}
-				case SND_PCM_FORMAT_FLOAT_LE: {
-					const float *samples = reinterpret_cast<const float *>(src);
-					floatBuffer[i] = samples[i * m_config.channels + m_config.processChannel];
-					break;
-				}
-				default:
-					DBG_ERROR("Unsupported format");
-					return floatBuffer;
 				}
 			}
+			return multiBuffer;
+		} else {
+			// Mix mode: sum all channels per frame.
+			std::vector<float> mixedBuffer(err, 0.0f);
+			for (size_t i = 0; i < static_cast<size_t>(err); ++i) {
+				float sample = 0.0f;
+				for (unsigned int ch = 0; ch < m_config.channels; ++ch) {
+					switch (m_config.format) {
+						case SND_PCM_FORMAT_S16_LE: {
+							const int16_t *samples = reinterpret_cast<const int16_t *>(src);
+							sample += samples[i * m_config.channels + ch] / 32768.0f;
+							break;
+						}
+						case SND_PCM_FORMAT_S32_LE: {
+							const int32_t *samples = reinterpret_cast<const int32_t *>(src);
+							sample += samples[i * m_config.channels + ch] / 2147483648.0f;
+							break;
+						}
+						case SND_PCM_FORMAT_FLOAT_LE: {
+							const float *samples = reinterpret_cast<const float *>(src);
+							sample += samples[i * m_config.channels + ch];
+							break;
+						}
+						default:
+							DBG_ERROR("Unsupported format");
+							return mixedBuffer;
+					}
+				}
+				mixedBuffer[i] = sample / m_config.channels;
+			}
+			return mixedBuffer;
 		}
-
-		return floatBuffer;
 	}
 
 	unsigned int getSampleRate() const override
@@ -612,6 +657,10 @@ int main(int argc, char *argv[])
 	// Set desired log level
 	Logger::getInstance().setLogLevel(LOG_DEBUG);
 
+	// Set up signal handling
+	signal(SIGINT, signalHandler);
+	signal(SIGTERM, signalHandler);
+
 	if (argc < 2) {
 		printUsage(argv[0]);
 		return 1;
@@ -623,13 +672,52 @@ int main(int argc, char *argv[])
 		return 1;
 	}
 
-	// Set up signal handling
-	signal(SIGINT, signalHandler);
-	signal(SIGTERM, signalHandler);
+	// If no mapping is specified, default to mix mode.
+	if (config.sources.empty())
+	{
+		config.sources = "mix";
+	}
 
-	// Initialize FFTSyncCheck with custom parameters
-	SyncCheckConfig syncConfig(config.blockSize, config.overlapPercent, config.sampleRate,
-							 config.numBands, config.interpFactor);
+	// Set multichannel flag based on the mapping.
+	config.multichannel = (config.sources != "mix");
+
+	// Initialize appropriate capture source
+	std::unique_ptr<AudioSource> capture;
+	if (config.captureDevice.substr(0, 7) == "file://") {
+		capture = std::make_unique<FileCapture>(config);
+	} else {
+		capture = std::make_unique<AlsaCapture>(config);
+	}
+
+	if (!capture->isInitialized()) {
+		DBG_ERROR("Failed to initialize audio capture");
+		return 1;
+	}
+
+	// After capture initialization, update sampleRate and channels accordingly.
+	config.sampleRate = capture->getSampleRate();
+	config.channels = capture->getChannels();
+
+	// Initialize visualizer
+	DelayStatsVisualizer visualizer(config.outputFile, config.useColors);
+
+	DBG_INFO("Starting capture from device: " << config.captureDevice);
+	DBG_INFO("Sample rate: " << config.sampleRate);
+	DBG_INFO("Physical channels: " << config.channels);
+	DBG_INFO("Block size: " << config.blockSize);
+	DBG_INFO("Overlap: " << config.overlapPercent << "%");
+	DBG_INFO("Number of bands: " << config.numBands);
+	DBG_INFO("Interpolation factor: " << config.interpFactor);
+	DBG_INFO("Start frequency: " << config.startFreq);
+	DBG_INFO("Frequency range: " << config.freqRange);
+	DBG_INFO("Band separation: " << config.bandSep);
+	DBG_INFO("Sources mapping: " << config.sources);
+
+	// Initialize FFTSyncCheck.
+	//
+	// In mix mode we process a single mono channel.
+	// Otherwise, we will build a custom channel assignment based on --sources.
+	SyncCheckConfig syncConfig(config.blockSize, config.overlapPercent, config.sampleRate, config.numBands, config.interpFactor);
 	syncConfig.initBands(config.startFreq, config.freqRange, config.bandSep);
 	syncConfig.setDumpEnabled(config.dumpCorrelation);
 
@@ -670,63 +758,75 @@ int main(int argc, char *argv[])
 	// 	}
 	// }
 
-	// Initialize appropriate capture source
-	std::unique_ptr<AudioSource> capture;
-	if (config.captureDevice.substr(0, 7) == "file://") {
-		capture = std::make_unique<FileCapture>(config);
-	} else {
-		capture = std::make_unique<AlsaCapture>(config);
-	}
-
-	if (!capture->isInitialized()) {
-		DBG_ERROR("Failed to initialize audio capture");
-		return 1;
-	}
-
-	// make sure we use the actual sampling rate from the capture device
-	config.sampleRate = capture->getSampleRate();
-
-	// Initialize visualizer
-	DelayStatsVisualizer visualizer(config.outputFile, config.useColors);
-
-	DBG_INFO("Starting capture from device: " << config.captureDevice);
-	DBG_INFO("Sample rate: " << config.sampleRate);
-	DBG_INFO("Channels: " << config.channels);
-	DBG_INFO("Processing channel: " << config.processChannel);
-	DBG_INFO("Block size: " << config.blockSize);
-	DBG_INFO("Overlap: " << config.overlapPercent << "%");
-	DBG_INFO("Number of bands: " << config.numBands);
-	DBG_INFO("Interpolation factor: " << config.interpFactor);
-	DBG_INFO("Start frequency: " << config.startFreq);
-	DBG_INFO("Frequency range: " << config.freqRange);
-	DBG_INFO("Band separation: " << config.bandSep);
-
-	std::string bands;
-	for (int band_idx : config.bandsOfInterest) {
-		if (!bands.empty()) bands += ", ";
-		bands += "Band " + std::to_string(band_idx);
-	}
-	DBG_INFO("Bands of interest: " << bands);
-
-	unsigned int bandId = 1;
-	for (const auto& band : syncConfig.getBands()) {
-		DBG_INFO("Band " << bandId++ << ": " << band.getStartFreq() << " Hz - " << band.getEndFreq() << " Hz");
-	}
-
-	float statsUpdateTime = 0.0f;
-
 	FFTSyncCheck syncChecker(syncConfig);
 
-	// Processing buffer to hold block_size samples
-	std::vector<float> processingBuffer(config.blockSize, 0.0f);
-	size_t bufferFilled = 0;
+	// Setup channel assignments.
+	std::vector<FFTSyncCheck::ChannelAssignment> assignments;
+	if (config.sources == "mix")
+	{
+		// Create default channel assignments for mix mode.
+		// In mix mode, there is a single input channel (channel 0).
+		// We assign each band (except the reference band, assumed to be band 0) as its own processing assignment.
+		for (std::size_t band = 1; band < config.numBands; band++) {
+			FFTSyncCheck::ChannelAssignment assign;
+			assign.refChannel = 0;
+			assign.sigChannel = 0;
+			assign.refBand = band;
+			assign.sigBand = 0;
+			assignments.push_back(assign);
+		}
+		syncChecker.setMultiChannelMode(1);
+		syncChecker.setChannelAssignments(assignments);
+	}
+	else
+	{
+		std::istringstream srcStream(config.sources);
+		std::string token;
+		int refChannel = -1;
+		int refBand = -1;
+		while (std::getline(srcStream, token, ',')) {
+			if (token.empty())
+				continue;
+			size_t pos = token.find(':');
+			int ph = 0, band = 0;
+			if (pos != std::string::npos) {
+				ph = std::stoi(token.substr(0, pos));
+				band = std::stoi(token.substr(pos + 1));
+			} else {
+				ph = std::stoi(token);
+				band = 0;
+			}
+			FFTSyncCheck::ChannelAssignment assign;
+			assign.sigChannel = ph;
+			assign.sigBand = band;
+			// The first channel/band pair specifies the reference for all assignments.
+			if (assignments.empty()) {
+				refChannel = ph;
+				refBand = band;
+			}
+			assign.refChannel = refChannel;
+			assign.refBand = refBand;
+			assignments.push_back(assign);
+		}
+		syncChecker.setMultiChannelMode(assignments.size());
+		syncChecker.setChannelAssignments(assignments);
+	}
+
+	// Allocate processing buffer.
+	// For mixing mode, we expect blockSize samples.
+	// For per‑channel processing, we need blockSize frames × (number of assignments).
+	unsigned int procChannels = (config.sources == "mix") ? 1 : (unsigned int)assignments.size();
+	std::vector<float> processingBuffer(config.blockSize * procChannels, 0.0f);
+	// 'framesFilled' counts how many complete frames have been copied.
+	size_t framesFilled = 0;
+	float statsUpdateTime = 0.0f;
 
 	// Initialize WAV dump file if requested
 	SNDFILE* dumpFile = nullptr;
 	SF_INFO sfInfo = {};
 	if (!config.dumpFile.empty()) {
 		sfInfo.samplerate = config.sampleRate;
-		sfInfo.channels = 1;
+		sfInfo.channels = procChannels;
 		sfInfo.format = SF_FORMAT_WAV | SF_FORMAT_FLOAT;
 
 		dumpFile = sf_open(config.dumpFile.c_str(), SFM_WRITE, &sfInfo);
@@ -738,43 +838,65 @@ int main(int argc, char *argv[])
 	}
 
 	while (g_running) {
-		// Get new samples
 		std::vector<float> newSamples = capture->captureBlock();
-
-		// Dump audio if enabled
-		if (dumpFile) {
-			sf_writef_float(dumpFile, newSamples.data(), newSamples.size());
+		if (config.multichannel) {
+			// In non-mix mode, newSamples is interleaved over config.channels.
+			unsigned int newFrames = newSamples.size() / config.channels;
+			unsigned int framesNeeded = config.blockSize - framesFilled;
+			unsigned int framesToCopy = std::min(newFrames, framesNeeded);
+			// For each frame, extract only the channels needed as defined by assignments.
+			for (unsigned int i = 0; i < framesToCopy; i++) {
+				for (unsigned int m = 0; m < assignments.size(); m++) {
+					// Use the physical signal channel defined in the assignment.
+					int ph = assignments[m].sigChannel;
+					processingBuffer[(framesFilled + i) * procChannels + m] = newSamples[i * config.channels + ph];
+				}
+			}
+			framesFilled += framesToCopy;
+		}
+		else {
+			// Mix mode: capture code already returns mixed samples.
+			size_t samplesToProcess = std::min(newSamples.size(), config.blockSize - framesFilled);
+			std::copy(newSamples.begin(), newSamples.begin() + samplesToProcess, processingBuffer.begin() + framesFilled);
+			framesFilled += samplesToProcess;
 		}
 
-		// Copy new samples into processing buffer
-		size_t samplesToProcess = std::min(newSamples.size(), config.blockSize - bufferFilled);
-		std::copy(newSamples.begin(), newSamples.begin() + samplesToProcess, processingBuffer.begin() + bufferFilled);
-
-		bufferFilled += samplesToProcess;
-
-		// Process when we have a full block
-		if (bufferFilled >= config.blockSize) {
-			// Process the full block
+		// Process once we have a full block.
+		if (framesFilled >= config.blockSize) {
 			syncChecker.processSampleBlock(processingBuffer);
 
-			// Calculate hop size based on overlap percentage
-			size_t overlapSize = (config.blockSize * config.overlapPercent) / 100;
-			size_t hopSize = config.blockSize - overlapSize;
-
-			// Shift data by hop size
-			if (overlapSize > 0) {
-				std::copy(processingBuffer.begin() + hopSize, processingBuffer.begin() + config.blockSize, processingBuffer.begin());
-				bufferFilled = overlapSize;
-			} else {
-				bufferFilled = 0;
+			// Calculate hop size based on overlap (in frames) and shift processed data.
+			size_t overlapFrames = (config.blockSize * config.overlapPercent) / 100;
+			size_t hopFrames = config.blockSize - overlapFrames;
+			if (overlapFrames > 0) {
+				if (config.multichannel) {
+					std::copy(processingBuffer.begin() + hopFrames * procChannels, processingBuffer.begin() + config.blockSize * procChannels,
+							  processingBuffer.begin());
+				}
+				else {
+					std::copy(processingBuffer.begin() + hopFrames, processingBuffer.begin() + config.blockSize, processingBuffer.begin());
+				}
+				framesFilled = overlapFrames;
+			}
+			else {
+				framesFilled = 0;
 			}
 
-			statsUpdateTime += float(hopSize) / config.sampleRate;
+			statsUpdateTime += float(hopFrames) / config.sampleRate;
+
+			// Update statistics visualization at the configured refresh rate.
 			if (statsUpdateTime >= config.statsRefreshRate) {
-				std::vector<std::tuple<float, float, float>> estimates = syncChecker.getDelayStats();
-				visualizer.visualizeDelays(estimates, config.bandsOfInterest);
+				// getDelayStats now returns a vector of tuples:
+				// (ChannelAssignment, filtered delay, confidence, filtered PSLR)
+				std::vector<std::tuple<FFTSyncCheck::ChannelAssignment, float, float, float>> estimates = syncChecker.getDelayStats();
+				visualizer.visualizeDelays(estimates);
 				statsUpdateTime = 0.0f;
 			}
+		}
+
+		// If dumping is enabled, write the (raw) new samples.
+		if (dumpFile) {
+			sf_writef_float(dumpFile, newSamples.data(), newSamples.size() / procChannels);
 		}
 	}
 

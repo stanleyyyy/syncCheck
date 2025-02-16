@@ -32,11 +32,6 @@ struct DelayStats {
 	 */
 	void update(float new_delay, float new_pslr)
 	{
-		// // ignore any values with low pslr (below 2.0 dB)
-		// if (new_pslr < 2.0f) {
-		// 	return;
-		// }
-
 		if (m_history.size() >= HISTORY_SIZE) {
 			m_history.erase(m_history.begin());
 			m_pslrHistory.erase(m_pslrHistory.begin());

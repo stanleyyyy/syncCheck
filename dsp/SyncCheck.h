@@ -14,6 +14,19 @@
 class FFTSyncCheck
 {
 public:
+
+	/**
+	 * @brief Structure for assigning a pair of channels to a delay measurement.
+	 */
+	struct ChannelAssignment
+	{
+		std::size_t refChannel; ///< Input channel to be used as reference.
+		std::size_t refBand;    ///< Frequency band index from the reference channel.
+
+		std::size_t sigChannel; ///< Input channel containing the signal to compare.
+		std::size_t sigBand;    ///< Frequency band index from the signal channel.
+	};
+
 	/**
 	 * @brief Constructs the FFTSyncCheck object.
 	 *
@@ -46,42 +59,61 @@ public:
 	float calculateBandDelay(const std::vector<float> &signal, std::size_t band1, std::size_t band2);
 
 	/**
-	 * @brief Calculate the cross-correlation delay between two frequency bands using pre-computed FFT data
+	 * @brief Calculate the cross-correlation delay between two frequency bands using FFT data.
 	 *
-	 * @param fft_data Pre-computed FFT data
-	 * @param band1 Index of the first (reference) band
-	 * @param band2 Index of the second band
-	 * @return Calculated delay in milliseconds and PSLR in dB
+	 * This single unified version is used in both single-channel and multi-channel modes. In
+	 * single-channel mode, pass the same FFT data for both the reference and the signal.
+	 *
+	 * @param fft_data_ref FFT data from the reference signal
+	 * @param fft_data_sig FFT data from the signal to compare
+	 * @param refBand Frequency band index in the reference signal
+	 * @param sigBand Frequency band index in the signal data
+	 * @return A pair containing the calculated delay (in milliseconds) and PSLR (in dB)
 	 */
-	std::pair<float, float> calculateBandDelayFFT(const std::vector<kiss_fft_cpx>& fft_data, std::size_t band1, std::size_t band2);
+	std::pair<float, float> calculateBandDelayFFT(const std::vector<kiss_fft_cpx>& fft_data_ref,
+		const std::vector<kiss_fft_cpx>& fft_data_sig,
+		std::size_t refBand, std::size_t sigBand);
 
 	/**
-	 * @brief Print comprehensive delay statistics for each frequency band.
+	 * @brief Print comprehensive delay statistics for each channel assignment.
 	 *
-	 * @param expected_delays_ms Optional vector of expected delays in milliseconds for each band
+	 * @param expected_delays_ms Optional vector of expected delays in milliseconds for each channel assignment.
 	 */
-	void printDelayStats(const std::vector<float>& expected_delays_ms = std::vector<float>());
+	void printDelayStats(const std::vector<float>& expected_delays_ms);
 
 	/**
-	 * @brief Process a block of samples and update delay statistics.
+	 * @brief Process a block of interleaved input samples.
 	 *
-	 * @param samples Vector containing time-domain samples.
+	 * This unified implementation treats single- and multi-channel processing the same way.
+	 * New samples are copied into preallocated per-channel buffers; for every channel (that is used in an assignment)
+	 * with at least a full block (m_config.getBlockSize()) available, the first block is windowed and transformed via FFT.
+	 * The already computed FFT data is then used in calculateBandDelayFFT() for every channel assignment.
+	 * @param samples Interleaved audio samples.
 	 */
-	void processSampleBlock(const std::vector<float> &samples);
+	void processSampleBlock(const std::vector<float>& samples);
 
 	/**
-	 * @brief Get the filtered delay for a specific frequency band.
+	 * @brief Get the filtered delay of the specified channel assignment.
 	 *
-	 * @param band Index of the band.
-	 * @return Filtered delay in seconds.
+	 * @param assignment Index of the channel assignment.
+	 * @return Filtered delay value.
 	 */
-	float getFilteredDelay(std::size_t band);
+	float getFilteredDelay(std::size_t assignment);
 
 	/**
-	 * @brief Get all delay statistics
-	 * @return Vector of pairs containing filtered delay and confidence for each band
+	 * @brief Get all delay statistics.
+	 *
+	 * Each returned tuple contains:
+	 *   - ChannelAssignment: details of the channel assignment (refChannel, refBand, sigChannel, sigBand)
+	 *   - Filtered delay (float)
+	 *   - Confidence (float)
+	 *   - Filtered PSLR (float)
+	 *
+	 * This makes it easier to link each delay measurement to its original channel assignment.
+	 *
+	 * @return Vector of tuples with channel assignment and delay statistics.
 	 */
-	std::vector<std::tuple<float, float, float>> getDelayStats() const;
+	std::vector<std::tuple<ChannelAssignment, float, float, float>> getDelayStats() const;
 
 	/**
 	 * @brief Get the sample rate.
@@ -116,6 +148,20 @@ public:
 	 */
 	float computePSLR(const std::vector<float>& corr, int exclusion_radius);
 
+	/**
+	 * @brief Enable or disable multi-channel processing mode.
+	 *
+	 * @param numChannels If enabled, number of channels in the interleaved data.
+	 */
+	void setMultiChannelMode(const std::size_t numChannels);
+
+	/**
+	 * @brief Set the channel assignments for multi-channel processing.
+	 *
+	 * @param assignments Vector of channel assignment mappings.
+	 */
+	void setChannelAssignments(const std::vector<ChannelAssignment>& assignments);
+
 private:
 	/**
 	 * @brief Configuration object
@@ -127,7 +173,7 @@ private:
 	 */
 	std::vector<SyncCheckConfig::Band> m_bands;
 	/**
-	 * @brief Vector containing delay statistics for each frequency band.
+	 * @brief Vector containing delay statistics for each channel assignment.
 	 */
 	std::vector<DelayStats> m_delayStats;
 
@@ -136,14 +182,29 @@ private:
 	std::unique_ptr<KissFFTWrapper> m_paddedFftProcessor;
 	std::unique_ptr<STFTWindowGenerator> m_windowGenerator;
 
-	// Working buffers
 	std::size_t m_processingBufferFilled;
-	std::vector<float> m_processingBuffer;
-	std::vector<float> m_windowedBuffer;
 	std::vector<kiss_fft_cpx> m_correlationData;
 	std::vector<kiss_fft_cpx> m_correlationDataPadded;
 	std::vector<float> m_paddedTimeData;
 
 	// Butterworth lowpass filter
 	std::unique_ptr<ButterworthLowpass> m_lowpassFilter;
+
+	// Preallocated processing buffers for each channel.
+	std::vector<std::vector<float>> m_channelProcessingBuffers;
+
+	// Temporary per-channel windowed buffers (size = blockSize).
+	std::vector<std::vector<float>> m_tempWindowedBuffers;
+
+	// Preallocated FFT output for each channel (size = blockSize/2 + 1).
+	std::vector<std::vector<kiss_fft_cpx>> m_channelFFTs;
+
+	// In this unified mode every input channel is processed.
+	// (For single-channel mode, m_numInputChannels should be 1.)
+	std::size_t m_numInputChannels = 1;
+
+	/// Vector of channel assignment mappings.
+	std::vector<ChannelAssignment> m_channelAssignments;
+
+	int m_dumpCount = 0;
 };
