@@ -178,13 +178,13 @@ public:
 	 * @brief Get the dump enabled flag
 	 * @return The dump enabled flag
 	 */
-	bool getDumpEnabled() const { return m_dumpEnabled; }
+	bool getCorrelationDumpEnabled() const { return m_correlationDumpEnabled; }
 
 	/**
 	 * @brief Set the dump enabled flag
 	 * @param enabled The dump enabled flag
 	 */
-	void setDumpEnabled(bool enabled) { m_dumpEnabled = enabled; }
+	void setCorrelationDumpEnabled(bool enabled) { m_correlationDumpEnabled = enabled; }
 
 private:
 	std::size_t m_fftSize;		///< FFT size for analysis
@@ -193,7 +193,7 @@ private:
 	std::size_t m_numBands;		///< Number of frequency bands
 	std::size_t m_interpFactor;	///< Interpolation factor for delay calculations
 	std::vector<SyncCheckConfig::Band> m_bands;	///< Band definitions
-	bool m_dumpEnabled{false};  // Disabled by default
+	bool m_correlationDumpEnabled = false; // Disabled by default
 
 	/**
 	 * @brief Initialize default band configuration

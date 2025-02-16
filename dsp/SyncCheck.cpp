@@ -199,7 +199,7 @@ std::pair<float, float> FFTSyncCheck::calculateBandDelayFFT(const std::vector<ki
 	float pslr_db = computePSLR(m_paddedTimeData, padded_size / 64);
 
 	// Write out the correlation data for debugging if enabled
-	if (m_config.getDumpEnabled()) {
+	if (m_config.getCorrelationDumpEnabled()) {
 		char filename[256];
 		snprintf(filename, sizeof(filename), "correlation_data_%zu_%zu_%05d.bin", refBand, sigBand, m_dumpCount);
 		FILE* f = fopen(filename, "wb");
@@ -400,7 +400,7 @@ void FFTSyncCheck::processSampleBlock(const std::vector<float>& samples)
 				m_delayStats[i].update(delay, pslr);
 			}
 
-			if (m_config.getDumpEnabled())
+			if (m_config.getCorrelationDumpEnabled())
 				m_dumpCount++;
 
 			// Remove 'hopSize' worth of samples from the beginning of each channel's processing buffer.

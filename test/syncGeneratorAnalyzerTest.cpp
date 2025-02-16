@@ -10,7 +10,7 @@ int main()
 	// Initialize configuration
 	SyncCheckConfig config(4096, 50, 48000, 4, 2);
 	config.initBands(16000, 8000, 200);
-	config.setDumpEnabled(true);
+	config.setCorrelationDumpEnabled(false);
 
 	// Create sync checker with config
 	FFTSyncCheck syncChecker(config);

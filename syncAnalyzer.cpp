@@ -719,7 +719,7 @@ int main(int argc, char *argv[])
 	// Otherwise, we will build a custom channel assignment based on --sources.
 	SyncCheckConfig syncConfig(config.blockSize, config.overlapPercent, config.sampleRate, config.numBands, config.interpFactor);
 	syncConfig.initBands(config.startFreq, config.freqRange, config.bandSep);
-	syncConfig.setDumpEnabled(config.dumpCorrelation);
+	syncConfig.setCorrelationDumpEnabled(config.dumpCorrelation);
 
 	// {
 	// 	const float TEST_DURATION = 5.0f;  // Duration in seconds
