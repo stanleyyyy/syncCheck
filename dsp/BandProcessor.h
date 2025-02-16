@@ -90,11 +90,18 @@ public:
 	float getBandIsolation() const;
 
 	/**
-	 * @brief Apply window and perform FFT on input data
+	 * @brief Forward STFT via built-in STFT processor.
 	 * @param input Input time-domain data
 	 * @param output Output frequency-domain data
 	 */
-	void applyWindowAndFFT(const std::vector<float>& input, std::vector<kiss_fft_cpx>& output);
+	void forward(const std::vector<float>& input, std::vector<kiss_fft_cpx>& output);
+
+	/**
+	 * @brief Inverse STFT via built-in STFT processor.
+	 * @param frames Input frames.
+	 * @param output Output buffer.
+	 */
+	void inverse(const std::vector<std::vector<kiss_fft_cpx>>& frames, std::vector<float>& output);
 
 	/**
 	 * @brief Process a block with frequency shifting using pre-computed FFT data
@@ -107,13 +114,6 @@ public:
 								const std::vector<kiss_fft_cpx>& fft_data_to_shift,
 								std::vector<float>& output,
 								const SyncCheckConfig::Band& clearBand);
-
-	/**
-	 * @brief Inverse STFT via built-in STFT processor.
-	 * @param frames Input frames.
-	 * @param output Output buffer.
-	 */
-	void inverse(const std::vector<std::vector<kiss_fft_cpx>>& frames, std::vector<float>& output);
 
 private:
 	/**

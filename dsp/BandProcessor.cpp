@@ -135,7 +135,7 @@ float BandProcessor::getBandIsolation() const
 	return 10.0f * log10f(m_inBandPower / (m_outBandPower + 1e-10f));
 }
 
-void BandProcessor::applyWindowAndFFT(const std::vector<float>& input, std::vector<kiss_fft_cpx>& output)
+void BandProcessor::forward(const std::vector<float>& input, std::vector<kiss_fft_cpx>& output)
 {
 	// Perform STFT analysis
 	auto frames = m_stftProcessor->forward(input);

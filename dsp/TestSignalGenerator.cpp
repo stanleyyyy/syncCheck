@@ -221,10 +221,10 @@ void TestSignalGenerator::renderAudioBlock(std::vector<float> &output)
 
 			// Compute FFT of the full processing and background buffers.
 			std::vector<kiss_fft_cpx> backgroundFreq;
-			m_bandProcessors[0].applyWindowAndFFT(m_backgroundBuffer, backgroundFreq);
+			m_bandProcessors[0].forward(m_backgroundBuffer, backgroundFreq);
 
 			std::vector<kiss_fft_cpx> referenceFreq;
-			m_bandProcessors[0].applyWindowAndFFT(m_referenceBuffer, referenceFreq);
+			m_bandProcessors[0].forward(m_referenceBuffer, referenceFreq);
 
 			// Define clearBand covering all bands.
 			const SyncCheckConfig::Band clearBand = { m_config.getBands()[0].getStartFreq(), m_config.getBands()[m_config.getNumBands() - 1].getEndFreq() };
