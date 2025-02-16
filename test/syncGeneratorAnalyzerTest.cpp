@@ -8,8 +8,9 @@ int main()
 	Logger::getInstance().setLogLevel(LOG_DEBUG);
 
 	// Initialize configuration
-	SyncCheckConfig config(8192, 50, 44100, 8, 1);
-	config.initBands(18000, 4000, 100);
+	SyncCheckConfig config(4096, 50, 48000, 4, 2);
+	config.initBands(16000, 8000, 200);
+	config.setDumpEnabled(true);
 
 	// Create sync checker with config
 	FFTSyncCheck syncChecker(config);
@@ -19,11 +20,7 @@ int main()
 		0.0f,   // Assignment 0 (corresponding to band 1)
 		-0.3f,  // Assignment 1 (corresponding to band 2)
 		1.0f,   // Assignment 2 (corresponding to band 3)
-		-0.5f,  // Assignment 3 (corresponding to band 4)
-		2.0f,   // Assignment 4 (corresponding to band 5)
-		-1.0f,  // Assignment 5 (corresponding to band 6)
-		0.7f,   // Assignment 6 (corresponding to band 7)
-		-1.3f   // Assignment 7 (corresponding to band 8)
+		-0.5f  // Assignment 3 (corresponding to band 4)
 	};
 
 	DBG_INFO("Generating test signal...");

@@ -46,7 +46,7 @@ void printUsage(const char *programName)
 			  << "  -r, --rate=RATE        Sample rate (default: 48000)\n"
 			  << "      --block-size=NUM   FFT block size (default: 8192)\n"
 			  << "      --overlap=NUM      Overlap percent (50 or 75, default: 50)\n"
-			  << "      --bands=NUM        Number of frequency bands (default: 8)\n"
+			  << "      --bands=NUM        Number of frequency bands (default: 4)\n"
 			  << "      --interp=NUM       Interpolation factor (default: 1)\n"
 			  << "      --delays=DELAYS    Comma-separated list of delays in ms for each band\n"
 			  << "  -h, --help             Show this help message\n";
@@ -177,7 +177,7 @@ int main(int argc, char *argv[])
 	// Initialize configuration
 	SyncCheckConfig syncConfig(config.blockSize, config.overlapPercent, config.sampleRate,
 							 config.numBands, config.interpFactor);
-	syncConfig.initBands(18000, 4000, 100);
+	syncConfig.initBands(16000, 8000, 200);
 
 	DBG_INFO("Generating test signal with parameters:");
 	DBG_INFO("Duration: " << config.duration << "s");

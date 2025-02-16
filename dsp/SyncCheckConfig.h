@@ -77,7 +77,7 @@ public:
 	/**
 	 * @brief Number of frequency bands used in analysis.
 	 */
-	static constexpr int DEFAULT_NUM_BANDS = 8;
+	static constexpr int DEFAULT_NUM_BANDS = 4;
 
 	/**
 	 * @brief Interpolation factor for delay calculations.

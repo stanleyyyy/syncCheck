@@ -45,9 +45,9 @@ struct AppConfig
 	unsigned int	overlapPercent = SyncCheckConfig::DEFAULT_OVERLAP_PERCENT;
 	unsigned int	numBands = SyncCheckConfig::DEFAULT_NUM_BANDS;
 	unsigned int	interpFactor = SyncCheckConfig::DEFAULT_INTERP_FACTOR;
-	unsigned int	startFreq = 18000;
+	unsigned int	startFreq = 16000;
 	unsigned int	freqRange = 4000;
-	unsigned int	bandSep = 100;
+	unsigned int	bandSep = 200;
 	bool			dumpEnabled = false;
 	float			statsRefreshRate = 1.0f;  // Stats refresh rate in seconds
 	bool			dumpCorrelation = false;
@@ -213,9 +213,9 @@ void printUsage(const char *programName)
 			  << "      --overlap=NUM      Overlap percent (50 or 75, default: 50)\n"
 			  << "      --bands=NUM        Number of frequency bands (default: 8)\n"
 			  << "      --interp=NUM       Interpolation factor (default: 1)\n"
-			  << "      --start-freq=NUM   Start frequency in Hz (default: 18000)\n"
-			  << "      --freq-range=NUM   Frequency range in Hz (default: 4000)\n"
-			  << "      --band-sep=NUM     Band separation in Hz (default: 100)\n"
+			  << "      --start-freq=NUM   Start frequency in Hz (default: 16000)\n"
+			  << "      --freq-range=NUM   Frequency range in Hz (default: 8000)\n"
+			  << "      --band-sep=NUM     Band separation in Hz (default: 200)\n"
 			  << "      --refresh-rate=NUM Statistics refresh rate in seconds (default: 1.0)\n"
 			  << "      --dump              Enable audio dump to WAV files (auto-named)\n"
 			  << "  -S, --sources=MAPPINGS   Specify input mapping. Use \"mix\" to mix all channels or provide a comma-separated list (e.g. \"0:0,1:1\" or \"0,1\").\n"
