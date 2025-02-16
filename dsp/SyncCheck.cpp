@@ -191,8 +191,8 @@ std::pair<float, float> FFTSyncCheck::calculateBandDelayFFT(const std::vector<ki
 	// Compute PSLR (Peak-to-Side-Lobe Ratio)
 	float pslr_db = computePSLR(m_paddedTimeData, padded_size / 64);
 
-	// Write out the correlation data for debugging
-	{
+	// Write out the correlation data for debugging if enabled
+	if (m_config.getDumpEnabled()) {
 		static int dump_count = 0;
 		if (band1 == 2) {
 			char filename[256];

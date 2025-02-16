@@ -50,6 +50,7 @@ struct AppConfig
 	std::string dumpFile;
 	float statsRefreshRate = 1.0f;  // Stats refresh rate in seconds
 	std::set<int> bandsOfInterest;  // Bands to include in reports (empty = all bands)
+	bool dumpCorrelation = false;
 };
 
 void signalHandler(int signum)
@@ -167,6 +168,7 @@ void printUsage(const char *programName)
 			  << "  -c, --channels=NUM     Number of input channels (default: 1)\n"
 			  << "  -s  --process-ch=NUM   Channel to process (0-based, default: 0)\n"
 			  << "  -p, --period-size=NUM  Period size (default: 1024)\n"
+			  << "      --dump-correlation Enable correlation data dumping\n"
 			  << "      --block-size=NUM   FFT block size (default: 8192)\n"
 			  << "      --overlap=NUM      Overlap percent (50 or 75, default: 50)\n"
 			  << "      --bands=NUM        Number of frequency bands (default: 8)\n"
@@ -213,6 +215,7 @@ std::pair<bool, AppConfig> parseCommandLine(int argc, char *argv[])
 		{ "band-sep", required_argument, 0, 8 },
 		{ "refresh-rate", required_argument, 0, 9 },
 		{ "bands-of-interest", required_argument, 0, 10 },
+		{ "dump-correlation", no_argument, 0, 11 },
 		{ "help", no_argument, 0, 'h' },
 		{ 0, 0, 0, 0 }
 	};
@@ -297,6 +300,9 @@ std::pair<bool, AppConfig> parseCommandLine(int argc, char *argv[])
 					config.bandsOfInterest.insert(band_idx - 1);
 				}
 			}
+			break;
+		case 11:
+			config.dumpCorrelation = true;
 			break;
 		case 'h':
 			return { false, config };
@@ -625,6 +631,7 @@ int main(int argc, char *argv[])
 	SyncCheckConfig syncConfig(config.blockSize, config.overlapPercent, config.sampleRate,
 							 config.numBands, config.interpFactor);
 	syncConfig.initBands(config.startFreq, config.freqRange, config.bandSep);
+	syncConfig.setDumpEnabled(config.dumpCorrelation);
 
 	// {
 	// 	const float TEST_DURATION = 5.0f;  // Duration in seconds
