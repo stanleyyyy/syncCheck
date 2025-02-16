@@ -48,7 +48,7 @@ struct AppConfig
 	unsigned int	startFreq = 18000;
 	unsigned int	freqRange = 4000;
 	unsigned int	bandSep = 100;
-	std::string		dumpFile;
+	bool			dumpEnabled = false;
 	float			statsRefreshRate = 1.0f;  // Stats refresh rate in seconds
 	bool			dumpCorrelation = false;
 
@@ -217,7 +217,7 @@ void printUsage(const char *programName)
 			  << "      --freq-range=NUM   Frequency range in Hz (default: 4000)\n"
 			  << "      --band-sep=NUM     Band separation in Hz (default: 100)\n"
 			  << "      --refresh-rate=NUM Statistics refresh rate in seconds (default: 1.0)\n"
-			  << "      --dump=FILE        Dump captured audio to WAV file\n"
+			  << "      --dump              Enable audio dump to WAV files (auto-named)\n"
 			  << "  -S, --sources=MAPPINGS   Specify input mapping. Use \"mix\" to mix all channels or provide a comma-separated list (e.g. \"0:0,1:1\" or \"0,1\").\n"
 			  << "  -h, --help            Show this help message\n";
 }
@@ -249,7 +249,7 @@ std::pair<bool, AppConfig> parseCommandLine(int argc, char *argv[])
 		{ "overlap",		required_argument, 0, 2 },
 		{ "bands",			required_argument, 0, 3 },
 		{ "interp",			required_argument, 0, 4 },
-		{ "dump",			required_argument, 0, 5 },
+		{ "dump",			no_argument,		0, 5 },
 		{ "start-freq",		required_argument, 0, 6 },
 		{ "freq-range",		required_argument, 0, 7 },
 		{ "band-sep",		required_argument, 0, 8 },
@@ -309,7 +309,7 @@ std::pair<bool, AppConfig> parseCommandLine(int argc, char *argv[])
 			config.interpFactor = std::stoi(optarg);
 			break;
 		case 5: // dump
-			config.dumpFile = optarg;
+			config.dumpEnabled = true;
 			break;
 		case 6: // start-freq
 			config.startFreq = std::stoi(optarg);
@@ -824,17 +824,26 @@ int main(int argc, char *argv[])
 	// Initialize WAV dump file if requested
 	SNDFILE* dumpFile = nullptr;
 	SF_INFO sfInfo = {};
-	if (!config.dumpFile.empty()) {
+	if (config.dumpEnabled) {
+		// Create filename with configuration parameters
+		std::stringstream ss;
+		ss << "dump_"
+		   << config.startFreq << "hz_"
+		   << config.freqRange << "range_"
+		   << config.bandSep << "sep_"
+		   << config.numBands << "bands.wav";
+		std::string dumpFileName = ss.str();
+
 		sfInfo.samplerate = config.sampleRate;
 		sfInfo.channels = procChannels;
 		sfInfo.format = SF_FORMAT_WAV | SF_FORMAT_FLOAT;
 
-		dumpFile = sf_open(config.dumpFile.c_str(), SFM_WRITE, &sfInfo);
+		dumpFile = sf_open(dumpFileName.c_str(), SFM_WRITE, &sfInfo);
 		if (!dumpFile) {
-			DBG_ERROR("Failed to open dump file: " << config.dumpFile << " (" << sf_strerror(nullptr) << ")");
+			DBG_ERROR("Failed to open dump file: " << dumpFileName << " (" << sf_strerror(nullptr) << ")");
 			return 1;
 		}
-		DBG_INFO("Dumping audio to: " << config.dumpFile);
+		DBG_INFO("Dumping audio to: " << dumpFileName);
 	}
 
 	while (g_running) {
