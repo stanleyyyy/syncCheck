@@ -440,6 +440,7 @@ int main(int argc, char *argv[])
 	// 'framesFilled' counts how many complete frames have been copied.
 	size_t framesFilled = 0;
 	float statsUpdateTime = 0.0f;
+	float totalTime = 0.0f;
 
 	// Initialize WAV dump file if requested
 	SNDFILE* dumpFile = nullptr;
@@ -529,13 +530,14 @@ int main(int argc, char *argv[])
 			}
 
 			statsUpdateTime += float(hopFrames) / config.m_sampleRate;
+			totalTime += float(hopFrames) / config.m_sampleRate;
 
 			// Update statistics visualization at the configured refresh rate.
 			if (statsUpdateTime >= config.m_statsRefreshRate) {
 				// getDelayStats now returns a vector of tuples:
 				// (ChannelAssignment, filtered delay, confidence, filtered PSLR)
 				std::vector<std::tuple<FFTSyncCheck::ChannelAssignment, float, float, float>> estimates = syncChecker.getDelayStats();
-				visualizer.visualizeDelays(estimates);
+				visualizer.visualizeDelays(estimates, totalTime);
 				statsUpdateTime = 0.0f;
 			}
 		}
