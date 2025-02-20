@@ -195,6 +195,9 @@ void BandProcessor::processBlockWithShiftFFT(const std::vector<kiss_fft_cpx> &ff
 	// Copy background into working frequency data. Do not copy anything after the clear band end bin.
 	std::copy(fft_data_background.begin(), fft_data_background.begin() + clearEndBin, m_workingFreqData.begin());
 
+	// Zero out the rest of the frequency data
+	std::fill(m_workingFreqData.begin() + clearEndBin, m_workingFreqData.end(), kiss_fft_cpx{0.0f, 0.0f});
+
 	const double sampleRate = static_cast<double>(m_config.getSampleRate());
 	const double blockSize = static_cast<double>(m_config.getBlockSize());
 
@@ -214,7 +217,7 @@ void BandProcessor::processBlockWithShiftFFT(const std::vector<kiss_fft_cpx> &ff
 	else
 		clearStartBin = 0;
 
-	for (std::size_t i = clearStartBin, j = 0; i <= clearEndBin && i < m_workingFreqData.size(); i++, j++) {
+	for (std::size_t i = clearStartBin, j = 0; i <= clearEndBin && i < m_workingFreqData.size() && j < m_clearTaper.size(); i++, j++) {
 		float taper = m_clearTaper[j];
 		// Multiply by (1 - taper) so that the band is smoothly cleared.
 		m_workingFreqData[i].r *= (1.0f - taper);
