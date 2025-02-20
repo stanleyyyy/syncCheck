@@ -12,6 +12,22 @@ SyncCheckConfig::SyncCheckConfig(std::size_t fft_size, std::size_t overlap_perce
 	initDefaultBands();
 }
 
+bool SyncCheckConfig::operator == (const SyncCheckConfig &other) const
+{
+	return m_fftSize == other.m_fftSize &&
+		m_overlapSize == other.m_overlapSize &&
+		m_sampleRate == other.m_sampleRate &&
+		m_numBands == other.m_numBands &&
+		m_interpFactor == other.m_interpFactor &&
+		m_bands == other.m_bands;
+}
+
+bool SyncCheckConfig::Band::operator == (const Band &other) const
+{
+	return m_startFreq == other.m_startFreq &&
+		m_endFreq == other.m_endFreq;
+}
+
 void SyncCheckConfig::setBands(const std::vector<SyncCheckConfig::Band>& bands)
 {
 	if (!bands.empty()) {

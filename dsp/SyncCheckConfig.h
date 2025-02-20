@@ -19,6 +19,20 @@ public:
 		double m_endFreq;    // End frequency in Hz
 
 		/**
+		 * @brief Compare two Band objects
+		 * @param other The other Band object to compare with
+		 * @return True if the objects are equal, false otherwise
+		 */
+		bool operator == (const Band &other) const;
+
+		/**
+		 * @brief Compare two Band objects
+		 * @param other The other Band object to compare with
+		 * @return True if the objects are not equal, false otherwise
+		 */
+		bool operator != (const Band &other) const { return !(*this == other); }
+
+		/**
 		 * @brief Convert frequency to bin
 		 * @param freq Frequency in Hz
 		 * @param fftSize FFT size
@@ -111,6 +125,20 @@ public:
 	SyncCheckConfig(std::size_t fft_size = DEFAULT_BLOCK_SIZE, std::size_t overlap = DEFAULT_OVERLAP_PERCENT,
 					std::size_t sample_rate = DEFAULT_SAMPLE_RATE,
 					std::size_t num_bands = DEFAULT_NUM_BANDS, std::size_t interp_factor = DEFAULT_INTERP_FACTOR);
+
+	/**
+	 * @brief Compare two SyncCheckConfig objects
+	 * @param other The other SyncCheckConfig object to compare with
+	 * @return True if the objects are equal, false otherwise
+	 */
+	bool operator == (const SyncCheckConfig &other) const;
+
+	/**
+	 * @brief Compare two SyncCheckConfig objects
+	 * @param other The other SyncCheckConfig object to compare with
+	 * @return True if the objects are not equal, false otherwise
+	 */
+	bool operator != (const SyncCheckConfig &other) const { return !(*this == other); }
 
 	/**
 	 * @brief Initialize bands with custom start frequency, frequency range, and band separation
