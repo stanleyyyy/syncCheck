@@ -143,6 +143,11 @@ std::pair<float, float> FFTSyncCheck::calculateBandDelayFFT(const std::vector<ki
 	std::size_t ref_end = m_config.getBands()[refBand].getEndBin(blockSize, m_config.getSampleRate());
 	std::size_t band_width = ref_end - ref_start + 1;
 
+	ASSERT_WITH_ERROR(ref_start < orig_freq_size, "Invalid reference start bin");
+	ASSERT_WITH_ERROR(sig_start < orig_freq_size, "Invalid signal start bin");
+	ASSERT_WITH_ERROR(ref_end < orig_freq_size, "Invalid reference end bin");
+	ASSERT_WITH_ERROR(band_width > 0, "Invalid band width");
+
 	// Clear and prepare correlation data.
 	m_correlationData.resize(orig_freq_size);
 	std::fill(m_correlationData.begin(), m_correlationData.end(), kiss_fft_cpx { 0.0f, 0.0f });

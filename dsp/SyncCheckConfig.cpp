@@ -1,5 +1,5 @@
 #include "SyncCheckConfig.h"
-
+#include "Logger.h"
 SyncCheckConfig::SyncCheckConfig(std::size_t fft_size, std::size_t overlap_percent,
 					std::size_t sample_rate, std::size_t num_bands, std::size_t interp_factor)
 	: m_fftSize(fft_size)
@@ -9,6 +9,7 @@ SyncCheckConfig::SyncCheckConfig(std::size_t fft_size, std::size_t overlap_perce
 	, m_interpFactor(interp_factor)
 	, m_bands(num_bands)
 {
+	ASSERT_WITH_ERROR(m_numBands >= MIN_BANDS && m_numBands <= MAX_BANDS, "Invalid number of bands");
 	initDefaultBands();
 }
 
@@ -33,6 +34,7 @@ void SyncCheckConfig::setBands(const std::vector<SyncCheckConfig::Band>& bands)
 	if (!bands.empty()) {
 		m_bands = bands;
 		m_numBands = bands.size();
+		ASSERT_WITH_ERROR(m_numBands >= MIN_BANDS && m_numBands <= MAX_BANDS, "Invalid number of bands");
 	}
 }
 
@@ -50,6 +52,8 @@ void SyncCheckConfig::initDefaultBands()
 
 void SyncCheckConfig::initBands(const double start_freq, const double freq_range, const double band_sep)
 {
+	ASSERT_WITH_ERROR(m_numBands >= MIN_BANDS && m_numBands <= MAX_BANDS, "Invalid number of bands");
+
 	m_bands.resize(m_numBands);
 	const double freq_per_band = freq_range / m_numBands;
 	for (std::size_t i = 0; i < m_numBands; i++) {

@@ -116,6 +116,16 @@ public:
 	static constexpr int DEFAULT_OVERLAP_PERCENT = 50;
 
 	/**
+	 * @brief Minimum number of frequency bands.
+	 */
+	static constexpr int MIN_BANDS = 1;
+
+	/**
+	 * @brief Maximum number of frequency bands.
+	 */
+	static constexpr int MAX_BANDS = 8;
+
+	/**
 	 * @brief Constructor with default configuration
 	 *
 	 * @param fft_size FFT size to use for analysis
