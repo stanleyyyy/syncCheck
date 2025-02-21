@@ -3,7 +3,6 @@
 #include <vector>
 #include <cmath>
 #include <iostream>
-#include "Logger.h"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -26,18 +25,8 @@ public:
 	* @param overlap Overlap between consecutive analysis windows.
 	* @param type The type of window to use (HANN or SINE).
 	*/
-	STFTWindowGenerator(int windowLength, int overlap, WindowType type = WindowType::BLACKMAN_HARRIS)
-	{
-		ASSERT_WITH_ERROR(overlap < windowLength, "Overlap must be less than window length.");
-		ASSERT_WITH_ERROR(overlap == windowLength / 2 || overlap == (3 * windowLength) / 4, "Overlap must be 50% or 75% of window length.");
-
-		m_windowLength = windowLength;
-		m_overlap = overlap;
-		m_hopSize = m_windowLength - m_overlap;
-		m_type = type;
-		generateWindows();
-	}
-
+	STFTWindowGenerator(int windowLength, int overlap, WindowType type = WindowType::BLACKMAN_HARRIS);
+	~STFTWindowGenerator();
 	/**
 	 * @brief Returns the computed analysis window.
 	 */

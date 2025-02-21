@@ -1,5 +1,6 @@
 #include "STFTWindowGenerator.h"
 #include "sndfile.h"
+#include "Logger.h"
 #include <cmath>
 
 std::vector<float> testWindowedOLA(const std::vector<float> &input, const STFTWindowGenerator &windowGen)

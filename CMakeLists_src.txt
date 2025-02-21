@@ -28,6 +28,7 @@ set(syncCheck_SOURCES
 	dsp/TestSignalGenerator.cpp
 	dsp/SyncSignalGenerator.cpp
 	dsp/STFTProcessor.cpp
+	dsp/STFTWindowGenerator.cpp
 	dsp/KissFFTWrapper.cpp
 	utils/Logger.cpp
 	kissfft/kiss_fft.c
