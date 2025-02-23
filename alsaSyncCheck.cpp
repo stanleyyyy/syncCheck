@@ -28,9 +28,14 @@ struct AppConfig
 	snd_pcm_format_t format = SND_PCM_FORMAT_S16_LE;
 	std::string outputFile;
 	bool useColors = true;
-	unsigned int channels = 8; // Number of channels to capture
+	unsigned int channels = 1;
 	unsigned int periodSize = 1024;
 	unsigned int periods = 4;
+	unsigned int processChannel = 0;  // Which channel to process
+	unsigned int blockSize = SyncCheckConfig::DEFAULT_BLOCK_SIZE;
+	unsigned int overlapPercent = SyncCheckConfig::DEFAULT_OVERLAP_PERCENT;
+	unsigned int numBands = SyncCheckConfig::DEFAULT_NUM_BANDS;
+	unsigned int interpFactor = SyncCheckConfig::DEFAULT_INTERP_FACTOR;
 };
 
 void signalHandler(int signum)
@@ -104,8 +109,13 @@ void printUsage(const char *programName)
 			  << "  -f, --format=FORMAT    Sample format (S16_LE, S32_LE, FLOAT_LE) (default: S16_LE)\n"
 			  << "  -o, --output=FILE      Output statistics to file\n"
 			  << "  -n, --no-colors        Disable ANSI colors in output\n"
-			  << "  -c, --channels=NUM     Number of input channels (default: 8)\n"
+			  << "  -c, --channels=NUM     Number of input channels (default: 1)\n"
 			  << "  -p, --period-size=NUM  Period size (default: 1024)\n"
+			  << "      --process-ch=NUM   Channel to process (0-based, default: 0)\n"
+			  << "      --block-size=NUM   FFT block size (default: 8192)\n"
+			  << "      --overlap=NUM      Overlap percent (50 or 75, default: 50)\n"
+			  << "      --bands=NUM        Number of frequency bands (default: 8)\n"
+			  << "      --interp=NUM       Interpolation factor (default: 1)\n"
 			  << "  -h, --help            Show this help message\n";
 }
 
@@ -124,9 +134,20 @@ std::pair<bool, AppConfig> parseCommandLine(int argc, char *argv[])
 {
 	AppConfig config;
 	static struct option long_options[] = {
-		{ "device", required_argument, 0, 'd' },	  { "rate", required_argument, 0, 'r' }, { "format", required_argument, 0, 'f' },
-		{ "output", required_argument, 0, 'o' },	  { "no-colors", no_argument, 0, 'n' },	 { "channels", required_argument, 0, 'c' },
-		{ "period-size", required_argument, 0, 'p' }, { "help", no_argument, 0, 'h' },		 { 0, 0, 0, 0 }
+		{ "device", required_argument, 0, 'd' },
+		{ "rate", required_argument, 0, 'r' },
+		{ "format", required_argument, 0, 'f' },
+		{ "output", required_argument, 0, 'o' },
+		{ "no-colors", no_argument, 0, 'n' },
+		{ "channels", required_argument, 0, 'c' },
+		{ "period-size", required_argument, 0, 'p' },
+		{ "process-ch", required_argument, 0, 1 },
+		{ "block-size", required_argument, 0, 2 },
+		{ "overlap", required_argument, 0, 3 },
+		{ "bands", required_argument, 0, 4 },
+		{ "interp", required_argument, 0, 5 },
+		{ "help", no_argument, 0, 'h' },
+		{ 0, 0, 0, 0 }
 	};
 
 	int opt;
@@ -157,11 +178,36 @@ std::pair<bool, AppConfig> parseCommandLine(int argc, char *argv[])
 		case 'p':
 			config.periodSize = std::stoi(optarg);
 			break;
+		case 1: // process-ch
+			config.processChannel = std::stoi(optarg);
+			break;
+		case 2: // block-size
+			config.blockSize = std::stoi(optarg);
+			break;
+		case 3: // overlap
+			config.overlapPercent = std::stoi(optarg);
+			if (config.overlapPercent != 50 && config.overlapPercent != 75) {
+				DBG_ERROR("Invalid overlap percent. Must be 50 or 75");
+				return { false, config };
+			}
+			break;
+		case 4: // bands
+			config.numBands = std::stoi(optarg);
+			break;
+		case 5: // interp
+			config.interpFactor = std::stoi(optarg);
+			break;
 		case 'h':
 			return { false, config };
 		default:
 			return { false, config };
 		}
+	}
+
+	// Validate process channel
+	if (config.processChannel >= config.channels) {
+		DBG_ERROR("Invalid process channel. Must be less than number of channels");
+		return { false, config };
 	}
 
 	return { true, config };
@@ -249,7 +295,7 @@ public:
 
 	std::vector<float> captureBlock()
 	{
-		std::vector<float> floatBuffer(m_config.periodSize * m_config.channels);
+		std::vector<float> floatBuffer(m_config.periodSize);
 
 		if (!isInitialized()) {
 			DBG_ERROR("AlsaCapture not properly initialized");
@@ -267,25 +313,26 @@ public:
 			return floatBuffer;
 		}
 
-		// Convert to float based on format
+		// Convert to float based on format, extracting only the specified channel
 		const uint8_t *src = m_buffer.data();
-		for (size_t i = 0; i < m_config.periodSize * m_config.channels; ++i) {
+		for (size_t i = 0; i < m_config.periodSize; ++i) {
 			switch (m_config.format) {
 			case SND_PCM_FORMAT_S16_LE: {
-				int16_t sample = *reinterpret_cast<const int16_t *>(src);
-				floatBuffer[i] = sample / 32768.0f;
-				src += 2;
+				const int16_t *samples = reinterpret_cast<const int16_t *>(src);
+				floatBuffer[i] = samples[i * m_config.channels + m_config.processChannel] / 32768.0f;
+				src += 2 * m_config.channels;
 				break;
 			}
 			case SND_PCM_FORMAT_S32_LE: {
-				int32_t sample = *reinterpret_cast<const int32_t *>(src);
-				floatBuffer[i] = sample / 2147483648.0f;
-				src += 4;
+				const int32_t *samples = reinterpret_cast<const int32_t *>(src);
+				floatBuffer[i] = samples[i * m_config.channels + m_config.processChannel] / 2147483648.0f;
+				src += 4 * m_config.channels;
 				break;
 			}
 			case SND_PCM_FORMAT_FLOAT_LE: {
-				floatBuffer[i] = *reinterpret_cast<const float *>(src);
-				src += 4;
+				const float *samples = reinterpret_cast<const float *>(src);
+				floatBuffer[i] = samples[i * m_config.channels + m_config.processChannel];
+				src += 4 * m_config.channels;
 				break;
 			}
 			default:
@@ -321,9 +368,9 @@ int main(int argc, char *argv[])
 	signal(SIGINT, signalHandler);
 	signal(SIGTERM, signalHandler);
 
-	// Initialize FFTSyncCheck
-	SyncCheckConfig syncConfig(SyncCheckConfig::DEFAULT_BLOCK_SIZE, SyncCheckConfig::DEFAULT_OVERLAP_PERCENT, config.sampleRate,
-							   SyncCheckConfig::DEFAULT_NUM_BANDS, SyncCheckConfig::DEFAULT_INTERP_FACTOR);
+	// Initialize FFTSyncCheck with custom parameters
+	SyncCheckConfig syncConfig(config.blockSize, config.overlapPercent, config.sampleRate,
+							 config.numBands, config.interpFactor);
 
 	FFTSyncCheck syncChecker(syncConfig);
 
@@ -340,6 +387,11 @@ int main(int argc, char *argv[])
 	DBG_INFO("Starting capture from device: " << config.alsaDevice);
 	DBG_INFO("Sample rate: " << config.sampleRate);
 	DBG_INFO("Channels: " << config.channels);
+	DBG_INFO("Processing channel: " << config.processChannel);
+	DBG_INFO("Block size: " << config.blockSize);
+	DBG_INFO("Overlap: " << config.overlapPercent << "%");
+	DBG_INFO("Number of bands: " << config.numBands);
+	DBG_INFO("Interpolation factor: " << config.interpFactor);
 
 	float statsUpdateTime = 0.0f;
 	const float STATS_UPDATE_INTERVAL = 1.0f; // Update stats every second
