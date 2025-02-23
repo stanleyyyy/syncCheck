@@ -3,6 +3,7 @@ set(syncCheck_PUBLIC_HEADERS
 	dsp/SyncCheck.h
 	dsp/SyncCheckConfig.h
 	dsp/TestSignalGenerator.h
+	utils/AudioSyncSharedTypes.h
 	kissfft/kiss_fftr.h
 )
 
