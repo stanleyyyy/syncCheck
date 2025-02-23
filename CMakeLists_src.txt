@@ -14,6 +14,7 @@ set(syncCheck_HEADERS
 	dsp/STFTProcessor.h
 	dsp/STFTWindowGenerator.h
 	dsp/KissFFTWrapper.h
+	dsp/KissFFTComplexWrapper.h
 	utils/Logger.h
 	utils/AudioInput.h
 	utils/AudioOutput.h
@@ -30,6 +31,7 @@ set(syncCheck_SOURCES
 	dsp/STFTProcessor.cpp
 	dsp/STFTWindowGenerator.cpp
 	dsp/KissFFTWrapper.cpp
+	dsp/KissFFTComplexWrapper.cpp
 	utils/Logger.cpp
 	kissfft/kiss_fft.c
 	kissfft/kiss_fftr.c
