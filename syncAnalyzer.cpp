@@ -12,15 +12,9 @@
 #include "SyncCheck.h"
 #include "TestSignalGenerator.h"
 #include "Logger.h"
-
-// ANSI color codes
-#define ANSI_COLOR_RED "\x1b[31m"
-#define ANSI_COLOR_GREEN "\x1b[32m"
-#define ANSI_COLOR_YELLOW "\x1b[33m"
-#define ANSI_COLOR_BLUE "\x1b[34m"
-#define ANSI_COLOR_MAGENTA "\x1b[35m"
-#define ANSI_COLOR_CYAN "\x1b[36m"
-#define ANSI_COLOR_RESET "\x1b[0m"
+#include "AudioInput.h"
+#include "AudioOutput.h"
+#include "DelayStatsVisualizer.h"
 
 static volatile bool g_running = true;
 
@@ -29,16 +23,12 @@ static volatile bool g_running = true;
  */
 struct AppConfig
 {
-#ifdef BUILDTYPE_PC
-	std::string			captureDevice = "hw:1"; // file://out.wav";
-#else
 	std::string			captureDevice = "default";
-#endif
 	unsigned int		sampleRate = 48000;
 	snd_pcm_format_t 	format = SND_PCM_FORMAT_S16_LE;
 	std::string			outputFile;
 	bool				useColors = true;
-	unsigned int		channels = 2;      // Physical channel count
+	unsigned int		channels = 2;
 	snd_pcm_uframes_t	periodSize = 4096;
 	unsigned int		periods = 4;
 	unsigned int		blockSize = SyncCheckConfig::DEFAULT_BLOCK_SIZE;
@@ -79,129 +69,6 @@ void signalHandler(int signum)
 	g_running = false;
 }
 
-class DelayStatsVisualizer
-{
-private:
-	std::ofstream m_outputFile;
-	bool m_useColors;
-	unsigned int m_dumpId;
-	float m_maxDelay;		// Maximum delay range (+/-)
-	unsigned int m_width;	// Width of ASCII visualization
-
-public:
-	DelayStatsVisualizer(const std::string &outputFile, bool useColors, float maxDelay = 5.0f, unsigned int width = 40)
-		: m_useColors(useColors)
-		, m_dumpId(0)
-		, m_maxDelay(maxDelay)
-		, m_width(width)
-	{
-		if (!outputFile.empty()) {
-			m_outputFile.open(outputFile);
-		}
-	}
-
-	/**
-	 * @brief Visualize delay statistics for each channel assignment.
-	 *
-	 * Outputs channel assignment details along with delay, confidence, and PSLR.
-	 *
-	 * @param estimates Vector of tuples containing (ChannelAssignment, delay, confidence, PSLR) for each assignment.
-	 */
-	void visualizeDelays(const std::vector<std::tuple<FFTSyncCheck::ChannelAssignment, float, float, float>> &estimates)
-	{
-		std::stringstream ss;
-		ss << std::fixed << std::setprecision(3);
-
-		// Calculate center position
-		int center = m_width / 2;
-		ss << "Delay channel[band] -> channel[band] (ms), each division = " << (m_maxDelay / (center - 1)) << " ms\n";
-
-		for (size_t i = 0; i < estimates.size(); ++i) {
-			const FFTSyncCheck::ChannelAssignment &assignment = std::get<0>(estimates[i]);
-			const double delay = std::get<1>(estimates[i]);
-			const double confidence = std::get<2>(estimates[i]);
-			const double pslr = std::get<3>(estimates[i]);
-
-			// Skip if the assignment is to the same channel and band.
-			if (assignment.refChannel == assignment.sigChannel && assignment.refBand == assignment.sigBand) {
-				continue;
-			}
-
-			std::string color;
-			if (m_useColors) {
-				if (pslr > 5.0f)
-					color = ANSI_COLOR_GREEN;
-				else if (pslr > 2.0)
-					color = ANSI_COLOR_YELLOW;
-				else
-					color = ANSI_COLOR_RED;
-			}
-
-			std::string assignStr = ""
-								+ std::to_string(assignment.refChannel) + "["
-								+ std::to_string(assignment.refBand) + "] -> "
-								+ std::to_string(assignment.sigChannel) + "["
-								+ std::to_string(assignment.sigBand) + "]";
-
-			// Updated label: output "Assignment X" always.
-			ss << (m_useColors ? color : "") << assignStr << ": "
-			   << std::setw(8) << delay << " ms [PSLR: "
-			   << std::fixed << std::setprecision(3) << std::setw(6) << pslr  // Fixed width of 6 for PSLR
-			   << " dB, confidence: " << std::setw(6) << confidence << "]"
-			   << (m_useColors ? ANSI_COLOR_RESET : "") << " |";
-
-			// ASCII visualization
-			int position = center + static_cast<int>((delay / m_maxDelay) * (center - 1));
-			position = std::max(0, std::min(static_cast<int>(m_width - 1), position));
-
-			for (unsigned int j = 0; j < m_width; ++j) {
-				if (j == position) {
-					ss << (m_useColors ? color : "") << "*" << (m_useColors ? ANSI_COLOR_RESET : "");
-				} else if (j == center) {
-					ss << "|";  // Center mark
-				} else {
-					ss << "-";
-				}
-			}
-			ss << "|\n";
-		}
-
-		// Output to console
-		std::cout << ss.str() << std::endl << std::flush;
-
-		// Output to file if opened
-		if (m_outputFile.is_open()) {
-			m_outputFile << std::setw(6) << std::setfill(' ') << m_dumpId++ << ", ";
-			for (size_t i = 0; i < estimates.size(); ++i) {
-				const FFTSyncCheck::ChannelAssignment &assignment = std::get<0>(estimates[i]);
-				const double delay = std::get<1>(estimates[i]);
-				const double confidence = std::get<2>(estimates[i]);
-				const double pslr = std::get<3>(estimates[i]);
-
-				// Skip if the assignment is to the same channel and band.
-				if (assignment.refChannel == assignment.sigChannel && assignment.refBand == assignment.sigBand) {
-					continue;
-				}
-
-				std::string assignStr = ""
-								+ std::to_string(assignment.refChannel) + "["
-								+ std::to_string(assignment.refBand) + "] -> "
-								+ std::to_string(assignment.sigChannel) + "["
-								+ std::to_string(assignment.sigBand) + "]";
-
-				m_outputFile << "Assignment " << assignStr << ": "
-				             << std::fixed << std::setprecision(3) << std::setw(8) << delay
-				             << " ms, confidence: " << std::setw(5) << confidence << ", PSLR: "
-				             << std::fixed << std::setprecision(3) << std::setw(5) << pslr;
-
-				if (i < estimates.size() - 1)
-					m_outputFile << ", ";
-			}
-			m_outputFile << std::endl;
-		}
-	}
-};
-
 void printUsage(const char *programName)
 {
 	std::cerr << "Usage: " << programName << " [options]\n"
@@ -215,10 +82,10 @@ void printUsage(const char *programName)
 			  << "  -c, --channels=NUM     Number of input channels (default: 1)\n"
 			  << "  -p, --period-size=NUM  Period size (default: 1024)\n"
 			  << "      --dump-correlation Enable correlation data dumping\n"
-			  << "      --block-size=NUM   FFT block size (default: 8192)\n"
-			  << "      --overlap=NUM      Overlap percent (50 or 75, default: 50)\n"
-			  << "      --bands=NUM        Number of frequency bands (default: 8)\n"
-			  << "      --interp=NUM       Interpolation factor (default: 1)\n"
+			  << "      --block-size=NUM   FFT block size (default: " << SyncCheckConfig::DEFAULT_BLOCK_SIZE << ")\n"
+			  << "      --overlap=NUM      Overlap percent (50 or 75, default: " << SyncCheckConfig::DEFAULT_OVERLAP_PERCENT << ")\n"
+			  << "      --bands=NUM        Number of frequency bands (default: " << SyncCheckConfig::DEFAULT_NUM_BANDS << ")\n"
+			  << "      --interp=NUM       Interpolation factor (default: " << SyncCheckConfig::DEFAULT_INTERP_FACTOR << ")\n"
 			  << "      --start-freq=NUM   Start frequency in Hz (default: 16000)\n"
 			  << "      --freq-range=NUM   Frequency range in Hz (default: 8000)\n"
 			  << "      --band-sep=NUM     Band separation in Hz (default: 200)\n"
@@ -350,529 +217,6 @@ std::pair<bool, AppConfig> parseCommandLine(int argc, char *argv[])
 	return { true, config };
 }
 
-class AudioSource {
-public:
-	virtual ~AudioSource() = default;
-	virtual bool isInitialized() const = 0;
-	virtual std::vector<float> captureBlock() = 0;
-	virtual unsigned int getSampleRate() const = 0;
-	virtual unsigned int getChannels() const = 0;
-};
-
-class FileCapture : public AudioSource {
-private:
-	AppConfig m_config;
-	SNDFILE* m_file;
-	SF_INFO m_sfInfo;
-	std::vector<float> m_buffer;
-	bool m_initialized;
-
-public:
-	FileCapture(const AppConfig& config)
-		: m_config(config)
-		, m_file(nullptr)
-		, m_initialized(false)
-	{
-		std::string filepath = config.captureDevice.substr(7); // Remove "file://" prefix
-
-		memset(&m_sfInfo, 0, sizeof(m_sfInfo));
-		m_file = sf_open(filepath.c_str(), SFM_READ, &m_sfInfo);
-
-		if (!m_file) {
-			DBG_ERROR("Cannot open audio file: " << filepath << " (" << sf_strerror(nullptr) << ")");
-			return;
-		}
-
-		// Override config parameters with file properties
-		m_config.channels = m_sfInfo.channels;
-		m_config.sampleRate = m_sfInfo.samplerate;
-
-		m_buffer.resize(m_config.periodSize * m_config.channels);
-		m_initialized = true;
-
-		DBG_INFO("Opened audio file: " << filepath);
-		DBG_INFO("Sample rate: " << m_sfInfo.samplerate << " Hz");
-		DBG_INFO("Channels: " << m_sfInfo.channels);
-		DBG_INFO("Format: 0x" << std::hex << m_sfInfo.format << std::dec);
-	}
-
-	~FileCapture() {
-		if (m_file) {
-			sf_close(m_file);
-		}
-	}
-
-	bool isInitialized() const override {
-		return m_initialized;
-	}
-
-	std::vector<float> captureBlock() override {
-		// Depending on the mode we return either mixed mono samples or raw interleaved samples.
-		// In mix mode: we mix all channels to a single stream.
-		// In multichannel mode: we return all channels (raw interleaved).
-
-		std::vector<float> output;
-		if (!isInitialized()) {
-			// Return silence: periodSize samples for mix mode, periodSize * channels for multichannel mode.
-			if (m_config.multichannel)
-				output.resize(m_config.periodSize * m_config.channels, 0.0f);
-			else
-				output.resize(m_config.periodSize, 0.0f);
-			return output;
-		}
-
-		sf_count_t framesRead = sf_readf_float(m_file, m_buffer.data(), m_config.periodSize);
-
-		if (framesRead == 0) {
-			g_running = false; // End of file
-			if (m_config.multichannel)
-				output.resize(m_config.periodSize * m_config.channels, 0.0f);
-			else
-				output.resize(m_config.periodSize, 0.0f);
-			return output;
-		}
-
-		// If in multichannel mode, return the raw interleaved data.
-		if (m_config.multichannel) {
-			std::vector<float> multiOutput(framesRead * m_config.channels, 0.0f);
-			std::copy(m_buffer.begin(), m_buffer.begin() + framesRead * m_config.channels, multiOutput.begin());
-			if (framesRead < static_cast<sf_count_t>(m_config.periodSize)) {
-				std::fill(multiOutput.begin() + framesRead * m_config.channels, multiOutput.end(), 0.0f);
-			}
-			return multiOutput;
-		} else {
-			// Otherwise (mix mode), mix all channels to obtain one mono sample per frame.
-			std::vector<float> mixedOutput(framesRead, 0.0f);
-			for (sf_count_t i = 0; i < framesRead; ++i) {
-				float sum = 0.0f;
-				for (unsigned int ch = 0; ch < m_config.channels; ++ch) {
-					sum += m_buffer[i * m_config.channels + ch];
-				}
-				mixedOutput[i] = sum / m_config.channels;
-			}
-			if (framesRead < static_cast<sf_count_t>(m_config.periodSize)) {
-				mixedOutput.resize(m_config.periodSize, 0.0f);
-			}
-			return mixedOutput;
-		}
-	}
-
-	unsigned int getSampleRate() const override
-	{
-		return m_sfInfo.samplerate;
-	}
-
-	unsigned int getChannels() const override
-	{
-		return m_config.channels;
-	}
-};
-
-class AlsaCapture : public AudioSource
-{
-private:
-	AppConfig m_config;
-	snd_pcm_t *m_handle;
-	std::vector<uint8_t> m_buffer;
-	unsigned int m_frameSize;
-
-public:
-	AlsaCapture(AppConfig &config)
-		: m_config(config)
-		, m_handle(nullptr)
-		, m_frameSize(0)
-	{
-		int err;
-		if ((err = snd_pcm_open(&m_handle, config.captureDevice.c_str(), SND_PCM_STREAM_CAPTURE, 0)) < 0) {
-			DBG_ERROR("Cannot open audio device: " << std::string(snd_strerror(err)));
-			return;
-		}
-
-		snd_pcm_hw_params_t *hw_params;
-		snd_pcm_hw_params_alloca(&hw_params);
-
-		if ((err = snd_pcm_hw_params_any(m_handle, hw_params)) < 0) {
-			DBG_ERROR("Cannot initialize hw params: " << std::string(snd_strerror(err)));
-			return;
-		}
-
-		if ((err = snd_pcm_hw_params_set_access(m_handle, hw_params, SND_PCM_ACCESS_RW_INTERLEAVED)) < 0) {
-			DBG_ERROR("Cannot set access type: " << std::string(snd_strerror(err)));
-			return;
-		}
-
-		if ((err = snd_pcm_hw_params_set_format(m_handle, hw_params, config.format)) < 0) {
-			DBG_ERROR("Cannot set sample format: " << std::string(snd_strerror(err)));
-			return;
-		}
-
-		if ((err = snd_pcm_hw_params_set_channels(m_handle, hw_params, config.channels)) < 0) {
-			DBG_ERROR("Cannot set channel count: " << std::string(snd_strerror(err)));
-			return;
-		}
-
-		unsigned int rate = config.sampleRate;
-		if ((err = snd_pcm_hw_params_set_rate_near(m_handle, hw_params, &rate, 0)) < 0) {
-			DBG_ERROR("Cannot set sample rate: " << std::string(snd_strerror(err)));
-			return;
-		}
-
-		// keep actual sample rate
-		m_config.sampleRate = rate;
-
-		if ((err = snd_pcm_hw_params_set_period_size_near(m_handle, hw_params, &config.periodSize, 0)) < 0) {
-			DBG_ERROR("Cannot set period size: " << std::string(snd_strerror(err)));
-			return;
-		}
-
-		if ((err = snd_pcm_hw_params_set_periods_near(m_handle, hw_params, &config.periods, 0)) < 0) {
-			DBG_ERROR("Cannot set periods: " << std::string(snd_strerror(err)));
-			return;
-		}
-
-		if ((err = snd_pcm_hw_params(m_handle, hw_params)) < 0) {
-			DBG_ERROR("Cannot set parameters: " << std::string(snd_strerror(err)));
-			return;
-		}
-
-		// Calculate frame size for all channels
-		m_frameSize = snd_pcm_format_width(config.format) / 8 * config.channels;
-		// Allocate buffer for all channels
-		m_buffer.resize(config.periodSize * m_frameSize);
-	}
-
-	~AlsaCapture()
-	{
-		if (m_handle) {
-			snd_pcm_close(m_handle);
-		}
-	}
-
-	bool isInitialized() const override
-	{
-		return m_handle != nullptr && m_frameSize > 0;
-	}
-
-	std::vector<float> captureBlock() override
-	{
-		// In mix mode we will mix all physical channels and return a mono stream.
-		// In multichannel mode we return raw interleaved data.
-		std::vector<float> floatBuffer;
-		if (!isInitialized()) {
-			DBG_ERROR("AlsaCapture not properly initialized");
-			if (m_config.multichannel)
-				floatBuffer.resize(m_config.periodSize * m_config.channels, 0.0f);
-			else
-				floatBuffer.resize(m_config.periodSize, 0.0f);
-			return floatBuffer;
-		}
-
-		int err = snd_pcm_readi(m_handle, m_buffer.data(), m_config.periodSize);
-		if (err == -EPIPE) {
-			DBG_WARN("Buffer overrun detected, recovering...");
-			snd_pcm_prepare(m_handle);
-			if (m_config.multichannel)
-				floatBuffer.resize(m_config.periodSize * m_config.channels, 0.0f);
-			else
-				floatBuffer.resize(m_config.periodSize, 0.0f);
-			return floatBuffer;
-		} else if (err < 0) {
-			DBG_ERROR("Error reading from PCM device: " << std::string(snd_strerror(err)));
-			if (m_config.multichannel)
-				floatBuffer.resize(m_config.periodSize * m_config.channels, 0.0f);
-			else
-				floatBuffer.resize(m_config.periodSize, 0.0f);
-			return floatBuffer;
-		}
-
-		const uint8_t *src = m_buffer.data();
-
-		if (m_config.multichannel) {
-			// Process and return each channel individually.
-			std::vector<float> multiBuffer(err * m_config.channels, 0.0f);
-			for (size_t i = 0; i < static_cast<size_t>(err); ++i) {
-				for (unsigned int ch = 0; ch < m_config.channels; ++ch) {
-					switch (m_config.format) {
-						case SND_PCM_FORMAT_S16_LE: {
-							const int16_t *samples = reinterpret_cast<const int16_t *>(src);
-							multiBuffer[i * m_config.channels + ch] = samples[i * m_config.channels + ch] / 32768.0f;
-							break;
-						}
-						case SND_PCM_FORMAT_S32_LE: {
-							const int32_t *samples = reinterpret_cast<const int32_t *>(src);
-							multiBuffer[i * m_config.channels + ch] = samples[i * m_config.channels + ch] / 2147483648.0f;
-							break;
-						}
-						case SND_PCM_FORMAT_FLOAT_LE: {
-							const float *samples = reinterpret_cast<const float *>(src);
-							multiBuffer[i * m_config.channels + ch] = samples[i * m_config.channels + ch];
-							break;
-						}
-						default:
-							DBG_ERROR("Unsupported format");
-							return multiBuffer;
-					}
-				}
-			}
-			return multiBuffer;
-		} else {
-			// Mix mode: sum all channels per frame.
-			std::vector<float> mixedBuffer(err, 0.0f);
-			for (size_t i = 0; i < static_cast<size_t>(err); ++i) {
-				float sample = 0.0f;
-				for (unsigned int ch = 0; ch < m_config.channels; ++ch) {
-					switch (m_config.format) {
-						case SND_PCM_FORMAT_S16_LE: {
-							const int16_t *samples = reinterpret_cast<const int16_t *>(src);
-							sample += samples[i * m_config.channels + ch] / 32768.0f;
-							break;
-						}
-						case SND_PCM_FORMAT_S32_LE: {
-							const int32_t *samples = reinterpret_cast<const int32_t *>(src);
-							sample += samples[i * m_config.channels + ch] / 2147483648.0f;
-							break;
-						}
-						case SND_PCM_FORMAT_FLOAT_LE: {
-							const float *samples = reinterpret_cast<const float *>(src);
-							sample += samples[i * m_config.channels + ch];
-							break;
-						}
-						default:
-							DBG_ERROR("Unsupported format");
-							return mixedBuffer;
-					}
-				}
-				mixedBuffer[i] = sample / m_config.channels;
-			}
-			return mixedBuffer;
-		}
-	}
-
-	unsigned int getSampleRate() const override
-	{
-		return m_config.sampleRate;
-	}
-
-	unsigned int getChannels() const override
-	{
-		return m_config.channels;
-	}
-};
-
-/**
- * @brief ALSA playback class to output captured audio.
- *
- * This class opens an ALSA playback device using the details specified
- * in the AppConfig (via outputDevice) and writes blocks of audio samples.
- * It uses the same audio format as configured for ALSA capture and
- * takes into account the multichannel flag. In mix mode (multichannel == false)
- * the output is mono.
- */
-class AlsaPlayback
-{
-private:
-	AppConfig m_config;
-	snd_pcm_t *m_handle;
-	unsigned int m_frameSize; // frame size in bytes for playback
-
-public:
-	/**
-	 * @brief Constructor that initializes the ALSA playback device.
-	 * @param config Application configuration (must have outputDevice set).
-	 */
-	AlsaPlayback(AppConfig &config)
-		: m_config(config)
-		, m_handle(nullptr)
-		, m_frameSize(0)
-	{
-		if (m_config.outputDevice.empty()) {
-			DBG_ERROR("Output device not specified in configuration");
-			return;
-		}
-
-		int err = snd_pcm_open(&m_handle, m_config.outputDevice.c_str(), SND_PCM_STREAM_PLAYBACK, 0);
-		if (err < 0) {
-			DBG_ERROR("Cannot open audio output device: " << m_config.outputDevice << " (" << snd_strerror(err) << ")");
-			return;
-		}
-
-		snd_pcm_hw_params_t *hw_params;
-		snd_pcm_hw_params_alloca(&hw_params);
-
-		err = snd_pcm_hw_params_any(m_handle, hw_params);
-		if (err < 0) {
-			DBG_ERROR("Cannot initialize hardware parameter structure for output device: " << m_config.outputDevice << " (" << snd_strerror(err) << ")");
-			return;
-		}
-
-		err = snd_pcm_hw_params_set_access(m_handle, hw_params, SND_PCM_ACCESS_RW_INTERLEAVED);
-		if (err < 0) {
-			DBG_ERROR("Cannot set access type for output device: " << m_config.outputDevice << " (" << snd_strerror(err) << ")");
-			return;
-		}
-
-		// Use the same audio format as in capture.
-		err = snd_pcm_hw_params_set_format(m_handle, hw_params, m_config.format);
-		if (err < 0) {
-			DBG_ERROR("Cannot set sample format for output device: " << m_config.outputDevice << " (" << snd_strerror(err) << ")");
-			return;
-		}
-
-		// Set playback channels following the multichannel flag:
-		// if multichannel is false (mix mode) then use 1 (mono) otherwise use config.channels.
-		unsigned int playbackChannels = m_config.multichannel ? m_config.channels : 1;
-		err = snd_pcm_hw_params_set_channels(m_handle, hw_params, playbackChannels);
-		if (err < 0) {
-			DBG_ERROR("Cannot set channel count for output device: " << m_config.outputDevice << " (" << snd_strerror(err) << ")");
-			return;
-		}
-
-		unsigned int rate = m_config.sampleRate;
-		err = snd_pcm_hw_params_set_rate_near(m_handle, hw_params, &rate, 0);
-		if (err < 0) {
-			DBG_ERROR("Cannot set sample rate for output device: " << m_config.outputDevice << " (" << snd_strerror(err) << ")");
-			return;
-		}
-		m_config.sampleRate = rate;
-
-		snd_pcm_uframes_t bufferSize = m_config.periodSize * m_config.periods;
-		err = snd_pcm_hw_params_set_buffer_size_near(m_handle, hw_params, &bufferSize);
-		if (err < 0) {
-			DBG_ERROR("Cannot set buffer size for output device: " << m_config.outputDevice << " (" << snd_strerror(err) << ")");
-			return;
-		}
-
-		err = snd_pcm_hw_params_set_period_size_near(m_handle, hw_params, &m_config.periodSize, 0);
-		if (err < 0) {
-			DBG_ERROR("Cannot set period size for output device: " << m_config.outputDevice << " (" << snd_strerror(err) << ")");
-			return;
-		}
-
-		err = snd_pcm_hw_params(m_handle, hw_params);
-		if (err < 0) {
-			DBG_ERROR("Cannot set hardware parameters for output device: " << m_config.outputDevice << " (" << snd_strerror(err) << ")");
-			return;
-		}
-
-		snd_pcm_sw_params_t *swParams;
-		snd_pcm_sw_params_alloca(&swParams);
-
-		if ((err = snd_pcm_sw_params_current(m_handle, swParams)) < 0) {
-			DBG_ERROR("Unable to determine current swparams for playback: " << snd_strerror(err));
-			return;
-		}
-
-		if ((err = snd_pcm_sw_params_get_start_threshold(swParams, &bufferSize)) < 0) {
-			DBG_ERROR("Unable to get start threshold mode for playback: " << snd_strerror(err));
-			return;
-		}
-
-		if ((err = snd_pcm_sw_params(m_handle, swParams)) < 0) {
-			DBG_ERROR("Unable to set sw params for playback: " << snd_strerror(err));
-			return;
-		}
-
-		// m_frameSize is based on the actual number of channels used for playback.
-		m_frameSize = (snd_pcm_format_width(m_config.format) / 8) * playbackChannels;
-		DBG_INFO("Audio output device initialized: " << m_config.outputDevice);
-	}
-
-	/**
-	 * @brief Destructor that closes the ALSA playback device.
-	 */
-	~AlsaPlayback()
-	{
-		if (m_handle) {
-			snd_pcm_close(m_handle);
-		}
-	}
-
-	/**
-	 * @brief Checks if the playback device was successfully initialized.
-	 * @return True if initialized, false otherwise.
-	 */
-	bool isInitialized() const { return m_handle != nullptr; }
-
-	/**
-	 * @brief Plays a block of audio samples.
-	 *
-	 * Converts captured floating point samples into the configured
-	 * audio format before writing to the output device, taking into account
-	 * the multichannel flag. In mix mode, each frame consists of one sample.
-	 *
-	 * @param samples Vector containing audio samples in floating point.
-	 * @return True if playback was successful, false otherwise.
-	 */
-	bool playBlock(const std::vector<float> &samples)
-	{
-		// Determine actual playback channel count.
-		unsigned int playbackChannels = m_config.multichannel ? m_config.channels : 1;
-		// In mix mode, samples are mono (1 channel), otherwise they are interleaved.
-		size_t frames = samples.size() / playbackChannels;
-		int err = 0;
-		switch (m_config.format) {
-		case SND_PCM_FORMAT_FLOAT_LE: {
-			err = snd_pcm_writei(m_handle, samples.data(), frames);
-			break;
-		}
-		case SND_PCM_FORMAT_S16_LE: {
-			std::vector<int16_t> buf(frames * playbackChannels);
-			for (size_t i = 0; i < frames; i++) {
-				for (unsigned int ch = 0; ch < playbackChannels; ch++) {
-					// For multichannel mode, use interleaved samples;
-					// in mix mode, use a single sample per frame.
-					float s = m_config.multichannel ? samples[i * m_config.channels + ch] : samples[i];
-					if (s > 1.0f)
-						s = 1.0f;
-					else if (s < -1.0f)
-						s = -1.0f;
-					buf[i * playbackChannels + ch] = static_cast<int16_t>(s * 32767);
-				}
-			}
-			err = snd_pcm_writei(m_handle, buf.data(), frames);
-			break;
-		}
-		case SND_PCM_FORMAT_S32_LE: {
-			std::vector<int32_t> buf(frames * playbackChannels);
-			for (size_t i = 0; i < frames; i++) {
-				for (unsigned int ch = 0; ch < playbackChannels; ch++) {
-					float s = m_config.multichannel ? samples[i * m_config.channels + ch] : samples[i];
-					if (s > 1.0f)
-						s = 1.0f;
-					else if (s < -1.0f)
-						s = -1.0f;
-					buf[i * playbackChannels + ch] = static_cast<int32_t>(s * 2147483647);
-				}
-			}
-			err = snd_pcm_writei(m_handle, buf.data(), frames);
-			break;
-		}
-		default: {
-			DBG_ERROR("Unsupported playback format");
-			return false;
-		}
-		}
-
-		if (err == -EPIPE) {
-			DBG_WARN("Underrun occurred on output device, recovering...");
-
-			err = snd_pcm_recover(m_handle, err, 0);
-			if (err < 0) {
-				DBG_ERROR("Alsa write fatally failed: " << snd_strerror(err));
-				snd_pcm_close(m_handle);
-				return false;
-			}
-			return false;
-		}
-		else if (err < 0) {
-			DBG_ERROR("Error writing to output device: " << snd_strerror(err));
-			return false;
-		}
-
-		return true;
-	}
-};
-
 int main(int argc, char *argv[])
 {
 	// Install stack trace handler
@@ -905,27 +249,35 @@ int main(int argc, char *argv[])
 	// Set multichannel flag based on the mapping.
 	config.multichannel = (config.sources != "mix");
 
-	// Initialize appropriate capture source
+	// Initialize capture device using individual settings.
+	// (Assuming config.captureDevice still holds the device string.)
 	std::unique_ptr<AudioSource> capture;
-	if (config.captureDevice.substr(0, 7) == "file://") {
-		capture = std::make_unique<FileCapture>(config);
+	if (config.captureDevice.find("file://") == 0) {
+		capture = std::make_unique<FileCapture>(config.captureDevice, config.periodSize, config.multichannel);
 	} else {
-		capture = std::make_unique<AlsaCapture>(config);
-	}
-
-	if (!capture->isInitialized()) {
-		DBG_ERROR("Failed to initialize audio capture");
-		return 1;
+		capture = std::make_unique<AlsaCapture>(config.captureDevice,
+			config.channels,
+			config.format,
+			config.sampleRate,
+			config.periodSize,
+			config.periods,
+			config.multichannel);
 	}
 
 	// After capture initialization, update sampleRate and channels accordingly.
 	config.sampleRate = capture->getSampleRate();
-	config.channels = capture->getChannels();
+	config.channels   = capture->getChannels();
 
-	// If an output device is specified, initialize audio playback.
+	// Initialize playback device if requested.
+	// (AlsaPlayback has been updated similarly to use individual output parameters.)
 	std::unique_ptr<AlsaPlayback> playback;
 	if (!config.outputDevice.empty()) {
-		playback = std::make_unique<AlsaPlayback>(config);
+		playback = std::make_unique<AlsaPlayback>(config.outputDevice,
+			config.channels,
+			config.format,
+			config.sampleRate,
+			config.periodSize,
+			config.periods);
 		if (!playback->isInitialized()) {
 			DBG_ERROR("Failed to initialize audio output device: " << config.outputDevice);
 			return 1;
@@ -948,51 +300,13 @@ int main(int argc, char *argv[])
 	DBG_INFO("Band separation: " << config.bandSep);
 	DBG_INFO("Sources mapping: " << config.sources);
 
-	// Initialize FFTSyncCheck.
-	//
 	// In mix mode we process a single mono channel.
 	// Otherwise, we will build a custom channel assignment based on --sources.
 	SyncCheckConfig syncConfig(config.blockSize, config.overlapPercent, config.sampleRate, config.numBands, config.interpFactor);
 	syncConfig.initBands(config.startFreq, config.freqRange, config.bandSep);
 	syncConfig.setCorrelationDumpEnabled(config.dumpCorrelation);
 
-	// {
-	// 	const float TEST_DURATION = 5.0f;  // Duration in seconds
-	// 	const float BLOCK_DURATION = 0.1f; // Block duration in seconds
-
-	// 	// Define test delays for each band in milliseconds
-	// 	std::vector<float> test_delays = {
-	// 		0.0f,   // Band 0 (reference)
-	// 		2.0f,  // Band 1
-	// 		1.0f,   // Band 2
-	// 		1.0f,  // Band 3
-	// 		1.0f,   // Band 4
-	// 		1.0f,  // Band 5
-	// 		1.0f,   // Band 6
-	// 		1.0f   // Band 7
-	// 	};
-
-	// 	DBG_INFO("Generating test signal...");
-	// 	TestSignalGenerator testSignalGenerator(syncConfig);
-	// 	testSignalGenerator.enableWavDump(true, "test_signal");
-	// 	std::vector<float> test_signal = testSignalGenerator.renderTestSignal(TEST_DURATION, test_delays);
-	// 	DBG_INFO("Test signal generated, processing blocks...");
-
-	// 	float elapsed_time = 0.0f;
-	// 	FFTSyncCheck syncChecker(syncConfig);
-	// 	for (size_t i = 0; i < test_signal.size(); i += static_cast<size_t>(BLOCK_DURATION * syncChecker.getSampleRate())) {
-	// 		size_t block_size = std::min(static_cast<size_t>(BLOCK_DURATION * syncChecker.getSampleRate()), test_signal.size() - i);
-	// 		std::vector<float> block(test_signal.begin() + i, test_signal.begin() + i + block_size);
-	// 		syncChecker.processSampleBlock(block);
-
-	// 		elapsed_time += BLOCK_DURATION;
-	// 		if (elapsed_time >= 1.0f) {
-	// 			syncChecker.printDelayStats(test_delays);
-	// 			elapsed_time = 0.0f;
-	// 		}
-	// 	}
-	// }
-
+	// Initialize FFTSyncCheck.
 	FFTSyncCheck syncChecker(syncConfig);
 
 	// Setup channel assignments.
@@ -1089,6 +403,11 @@ int main(int argc, char *argv[])
 
 	while (g_running) {
 		std::vector<float> newSamples = capture->captureBlock();
+		if (newSamples.empty()) {
+			DBG_ERROR("Capture returned empty buffer. Processing stopped.");
+			g_running = false;
+			break;
+		}
 
 		// If playback is enabled, write the captured block to the audio output.
 		if (playback) {

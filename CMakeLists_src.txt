@@ -15,6 +15,9 @@ set(syncCheck_HEADERS
 	dsp/STFTWindowGenerator.h
 	dsp/KissFFTWrapper.h
 	utils/Logger.h
+	utils/AudioInput.h
+	utils/AudioOutput.h
+	utils/DelayStatsVisualizer.h
 )
 
 set(syncCheck_SOURCES
