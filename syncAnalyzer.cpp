@@ -23,24 +23,100 @@ static volatile bool g_running = true;
  */
 struct AppConfig
 {
-	std::string			captureDevice = "default";
-	unsigned int		sampleRate = 48000;
-	snd_pcm_format_t 	format = SND_PCM_FORMAT_S16_LE;
-	std::string			outputFile;
-	bool				useColors = true;
-	unsigned int		channels = 2;
-	snd_pcm_uframes_t	periodSize = 4096;
-	unsigned int		periods = 4;
-	unsigned int		blockSize = SyncCheckConfig::DEFAULT_BLOCK_SIZE;
-	unsigned int		overlapPercent = SyncCheckConfig::DEFAULT_OVERLAP_PERCENT;
-	unsigned int		numBands = SyncCheckConfig::DEFAULT_NUM_BANDS;
-	unsigned int		interpFactor = SyncCheckConfig::DEFAULT_INTERP_FACTOR;
-	unsigned int		startFreq = 16000;
-	unsigned int		freqRange = 8000;
-	unsigned int		bandSep = 200;
-	bool				dumpEnabled = false;
-	float				statsRefreshRate = 1.0f;  // Stats refresh rate in seconds
-	bool				dumpCorrelation = false;
+	/**
+	 * @brief Audio capture device.
+	 */
+	std::string m_captureDevice = "default";
+
+	/**
+	 * @brief Audio output device.
+	 */
+	std::string m_outputDevice;
+
+	/**
+	 * @brief Sample rate.
+	 */
+	unsigned int m_sampleRate = 48000;
+
+	/**
+	 * @brief Input sample format.
+	 */
+	snd_pcm_format_t m_format = SND_PCM_FORMAT_S16_LE;
+
+	/**
+	 * @brief Number of physical input channels.
+	 */
+	unsigned int m_channels = 2;
+
+	/**
+	 * @brief Audio period size.
+	 */
+	snd_pcm_uframes_t m_periodSize = 4096;
+
+	/**
+	 * @brief Number of audio periods.
+	 */
+	unsigned int m_periods = 4;
+
+	/**
+	 * @brief FFT block size.
+	 */
+	unsigned int m_blockSize = SyncCheckConfig::DEFAULT_BLOCK_SIZE;
+
+	/**
+	 * @brief Overlap percent.
+	 */
+	unsigned int m_overlapPercent = SyncCheckConfig::DEFAULT_OVERLAP_PERCENT;
+
+	/**
+	 * @brief Number of frequency bands.
+	 */
+	unsigned int m_numBands = SyncCheckConfig::DEFAULT_NUM_BANDS;
+
+	/**
+	 * @brief Interpolation factor for spectral analysis.
+	 */
+	unsigned int m_interpFactor = SyncCheckConfig::DEFAULT_INTERP_FACTOR;
+
+	/**
+	 * @brief Start frequency of processing bands in Hz.
+	 */
+	unsigned int m_startFreq = 16000;
+
+	/**
+	 * @brief Frequency range of processing bands in Hz.
+	 */
+	unsigned int m_freqRange = 8000;
+
+	/**
+	 * @brief Band separation of processing bands in Hz.
+	 */
+	unsigned int m_bandSep = 200;
+
+	/**
+	 * @brief File name for output statistics dumps.
+	 */
+	std::string	m_dumpStatsFileName;
+
+	/**
+	 * @brief Audio dump enabled.
+	 */
+	bool m_dumpAudio = false;
+
+	/**
+	 * @brief Dump correlation data for debugging.
+	 */
+	bool m_dumpCorrelation = false;
+
+	/**
+	 * @brief Stats refresh rate in seconds.
+	 */
+	float m_statsRefreshRate = 1.0f;
+
+	/**
+	 * @brief Use colors.
+	 */
+	bool m_useColors = true;
 
 	/**
 	 * @brief Unified source mapping.
@@ -50,18 +126,13 @@ struct AppConfig
 	 * or in the form "physical:band" (e.g. "0:0,1:1" assigns physical channels 0 and 1
 	 * to band 0 and band 1 respectively).
 	 */
-	std::string sources;
+	std::string m_sources;
 
 	/**
 	 * @brief Flag indicating whether to capture each physical channel individually.
 	 * If false, capture code will mix all channels.
 	 */
-	bool multichannel = false;
-
-	/**
-	 * @brief ALSA output device.
-	 */
-	std::string outputDevice;
+	bool m_multichannel = false;
 };
 
 void signalHandler(int signum)
@@ -138,74 +209,74 @@ std::pair<bool, AppConfig> parseCommandLine(int argc, char *argv[])
 	while ((opt = getopt_long(argc, argv, "d:r:f:o:O:nc:p:s:h", long_options, nullptr)) != -1) {
 		switch (opt) {
 		case 'd':
-			config.captureDevice = optarg;
+			config.m_captureDevice = optarg;
 			break;
 		case 'r':
-			config.sampleRate = std::stoi(optarg);
+			config.m_sampleRate = std::stoi(optarg);
 			break;
 		case 'f':
-			config.format = parseFormat(optarg);
-			if (config.format == SND_PCM_FORMAT_UNKNOWN) {
+			config.m_format = parseFormat(optarg);
+			if (config.m_format == SND_PCM_FORMAT_UNKNOWN) {
 				DBG_ERROR("Invalid format specified");
 				return { false, config };
 			}
 			break;
 		case 'o':
-			config.outputFile = optarg;
+			config.m_dumpStatsFileName = optarg;
 			break;
 		case 'O':
-			config.outputDevice = optarg;
+			config.m_outputDevice = optarg;
 			break;
 		case 'n':
-			config.useColors = false;
+			config.m_useColors = false;
 			break;
 		case 'c':
-			config.channels = std::stoi(optarg);
+			config.m_channels = std::stoi(optarg);
 			break;
 		case 'p':
-			config.periodSize = std::stoi(optarg);
+			config.m_periodSize = std::stoi(optarg);
 			break;
 		case 'S': {
-			config.sources = optarg;
+			config.m_sources = optarg;
 			break;
 		}
 		case 1: // block-size
-			config.blockSize = std::stoi(optarg);
+			config.m_blockSize = std::stoi(optarg);
 			break;
 		case 2: // overlap
-			config.overlapPercent = std::stoi(optarg);
-			if (config.overlapPercent != 50 && config.overlapPercent != 75) {
+			config.m_overlapPercent = std::stoi(optarg);
+			if (config.m_overlapPercent != 50 && config.m_overlapPercent != 75) {
 				DBG_ERROR("Invalid overlap percent. Must be 50 or 75");
 				return { false, config };
 			}
 			break;
 		case 3: // bands
-			config.numBands = std::stoi(optarg);
+			config.m_numBands = std::stoi(optarg);
 			break;
 		case 4: // interp
-			config.interpFactor = std::stoi(optarg);
+			config.m_interpFactor = std::stoi(optarg);
 			break;
 		case 5: // dump
-			config.dumpEnabled = true;
+			config.m_dumpAudio = true;
 			break;
 		case 6: // start-freq
-			config.startFreq = std::stoi(optarg);
+			config.m_startFreq = std::stoi(optarg);
 			break;
 		case 7: // freq-range
-			config.freqRange = std::stoi(optarg);
+			config.m_freqRange = std::stoi(optarg);
 			break;
 		case 8: // band-sep
-			config.bandSep = std::stoi(optarg);
+			config.m_bandSep = std::stoi(optarg);
 			break;
 		case 9: // refresh-rate
-			config.statsRefreshRate = std::stof(optarg);
-			if (config.statsRefreshRate <= 0.0f) {
+			config.m_statsRefreshRate = std::stof(optarg);
+			if (config.m_statsRefreshRate <= 0.0f) {
 				DBG_ERROR("Invalid refresh rate. Must be greater than 0");
 				return { false, config };
 			}
 			break;
 		case 10:
-			config.dumpCorrelation = true;
+			config.m_dumpCorrelation = true;
 			break;
 		case 'h':
 			return { false, config };
@@ -241,82 +312,82 @@ int main(int argc, char *argv[])
 	}
 
 	// If no mapping is specified, default to mix mode.
-	if (config.sources.empty())
+	if (config.m_sources.empty())
 	{
-		config.sources = "mix";
+		config.m_sources = "mix";
 	}
 
 	// Set multichannel flag based on the mapping.
-	config.multichannel = (config.sources != "mix");
+	config.m_multichannel = (config.m_sources != "mix");
 
 	// Initialize capture device using individual settings.
-	// (Assuming config.captureDevice still holds the device string.)
+	// (Assuming config.m_captureDevice still holds the device string.)
 	std::unique_ptr<AudioSource> capture;
-	if (config.captureDevice.find("file://") == 0) {
-		capture = std::make_unique<FileCapture>(config.captureDevice, config.periodSize, config.multichannel);
+	if (config.m_captureDevice.find("file://") == 0) {
+		capture = std::make_unique<FileCapture>(config.m_captureDevice, config.m_periodSize, config.m_multichannel);
 	} else {
-		capture = std::make_unique<AlsaCapture>(config.captureDevice,
-			config.channels,
-			config.format,
-			config.sampleRate,
-			config.periodSize,
-			config.periods,
-			config.multichannel);
+		capture = std::make_unique<AlsaCapture>(config.m_captureDevice,
+			config.m_channels,
+			config.m_format,
+			config.m_sampleRate,
+			config.m_periodSize,
+			config.m_periods,
+			config.m_multichannel);
 	}
 
 	// After capture initialization, update sampleRate and channels accordingly.
-	config.sampleRate = capture->getSampleRate();
-	config.channels   = capture->getChannels();
+	config.m_sampleRate = capture->getSampleRate();
+	config.m_channels   = capture->getChannels();
 
 	// Initialize playback device if requested.
 	// (AlsaPlayback has been updated similarly to use individual output parameters.)
 	std::unique_ptr<AlsaPlayback> playback;
-	if (!config.outputDevice.empty()) {
-		playback = std::make_unique<AlsaPlayback>(config.outputDevice,
-			config.channels,
-			config.format,
-			config.sampleRate,
-			config.periodSize,
-			config.periods);
+	if (!config.m_outputDevice.empty()) {
+		playback = std::make_unique<AlsaPlayback>(config.m_outputDevice,
+			config.m_channels,
+			config.m_format,
+			config.m_sampleRate,
+			config.m_periodSize,
+			config.m_periods);
 		if (!playback->isInitialized()) {
-			DBG_ERROR("Failed to initialize audio output device: " << config.outputDevice);
+			DBG_ERROR("Failed to initialize audio output device: " << config.m_outputDevice);
 			return 1;
 		}
-		DBG_INFO("Audio output enabled on device: " << config.outputDevice);
+		DBG_INFO("Audio output enabled on device: " << config.m_outputDevice);
 	}
 
 	// Initialize visualizer
-	DelayStatsVisualizer visualizer(config.outputFile, config.useColors);
+	DelayStatsVisualizer visualizer(config.m_dumpStatsFileName, config.m_useColors);
 
-	DBG_INFO("Starting capture from device: " << config.captureDevice);
-	DBG_INFO("Sample rate: " << config.sampleRate);
-	DBG_INFO("Physical channels: " << config.channels);
-	DBG_INFO("Block size: " << config.blockSize);
-	DBG_INFO("Overlap: " << config.overlapPercent << "%");
-	DBG_INFO("Number of bands: " << config.numBands);
-	DBG_INFO("Interpolation factor: " << config.interpFactor);
-	DBG_INFO("Start frequency: " << config.startFreq);
-	DBG_INFO("Frequency range: " << config.freqRange);
-	DBG_INFO("Band separation: " << config.bandSep);
-	DBG_INFO("Sources mapping: " << config.sources);
+	DBG_INFO("Starting capture from device: " << config.m_captureDevice);
+	DBG_INFO("Sample rate: " << config.m_sampleRate);
+	DBG_INFO("Physical channels: " << config.m_channels);
+	DBG_INFO("Block size: " << config.m_blockSize);
+	DBG_INFO("Overlap: " << config.m_overlapPercent << "%");
+	DBG_INFO("Number of bands: " << config.m_numBands);
+	DBG_INFO("Interpolation factor: " << config.m_interpFactor);
+	DBG_INFO("Start frequency: " << config.m_startFreq);
+	DBG_INFO("Frequency range: " << config.m_freqRange);
+	DBG_INFO("Band separation: " << config.m_bandSep);
+	DBG_INFO("Sources mapping: " << config.m_sources);
 
 	// In mix mode we process a single mono channel.
 	// Otherwise, we will build a custom channel assignment based on --sources.
-	SyncCheckConfig syncConfig(config.blockSize, config.overlapPercent, config.sampleRate, config.numBands, config.interpFactor);
-	syncConfig.initBands(config.startFreq, config.freqRange, config.bandSep);
-	syncConfig.setCorrelationDumpEnabled(config.dumpCorrelation);
+	SyncCheckConfig syncConfig(config.m_blockSize, config.m_overlapPercent, config.m_sampleRate, config.m_numBands, config.m_interpFactor);
+	syncConfig.initBands(config.m_startFreq, config.m_freqRange, config.m_bandSep);
+	syncConfig.setCorrelationDumpEnabled(config.m_dumpCorrelation);
 
 	// Initialize FFTSyncCheck.
 	FFTSyncCheck syncChecker(syncConfig);
 
 	// Setup channel assignments.
 	std::vector<FFTSyncCheck::ChannelAssignment> assignments;
-	if (config.sources == "mix")
+	if (config.m_sources == "mix")
 	{
 		// Create default channel assignments for mix mode.
 		// In mix mode, there is a single input channel (channel 0).
 		// We assign each band (except the reference band, assumed to be band 0) as its own processing assignment.
-		for (std::size_t band = 1; band < config.numBands; band++) {
+		for (std::size_t band = 1; band < config.m_numBands; band++) {
 			FFTSyncCheck::ChannelAssignment assign;
 			assign.refChannel = 0;
 			assign.sigChannel = 0;
@@ -329,7 +400,7 @@ int main(int argc, char *argv[])
 	}
 	else
 	{
-		std::istringstream srcStream(config.sources);
+		std::istringstream srcStream(config.m_sources);
 		std::string token;
 		int refChannel = -1;
 		int refBand = -1;
@@ -364,8 +435,8 @@ int main(int argc, char *argv[])
 	// Allocate processing buffer.
 	// For mixing mode, we expect blockSize samples.
 	// For per‑channel processing, we need blockSize frames × (number of assignments).
-	unsigned int procChannels = (config.sources == "mix") ? 1 : (unsigned int)assignments.size();
-	std::vector<float> processingBuffer(config.blockSize * procChannels, 0.0f);
+	unsigned int procChannels = (config.m_sources == "mix") ? 1 : (unsigned int)assignments.size();
+	std::vector<float> processingBuffer(config.m_blockSize * procChannels, 0.0f);
 	// 'framesFilled' counts how many complete frames have been copied.
 	size_t framesFilled = 0;
 	float statsUpdateTime = 0.0f;
@@ -373,17 +444,17 @@ int main(int argc, char *argv[])
 	// Initialize WAV dump file if requested
 	SNDFILE* dumpFile = nullptr;
 	SF_INFO sfInfo = {};
-	if (config.dumpEnabled) {
+	if (config.m_dumpAudio) {
 		// Create filename with configuration parameters
 		std::stringstream ss;
 		ss << "dump_"
-		   << config.startFreq << "hz_"
-		   << config.freqRange << "range_"
-		   << config.bandSep << "sep_"
-		   << config.numBands << "bands.wav";
+		   << config.m_startFreq << "hz_"
+		   << config.m_freqRange << "range_"
+		   << config.m_bandSep << "sep_"
+		   << config.m_numBands << "bands.wav";
 		std::string dumpFileName = ss.str();
 
-		sfInfo.samplerate = config.sampleRate;
+		sfInfo.samplerate = config.m_sampleRate;
 		sfInfo.channels = procChannels;
 		sfInfo.format = SF_FORMAT_WAV | SF_FORMAT_FLOAT;
 
@@ -414,42 +485,42 @@ int main(int argc, char *argv[])
 			playback->playBlock(newSamples);
 		}
 
-		if (config.multichannel) {
+		if (config.m_multichannel) {
 			// In non-mix mode, newSamples is interleaved over config.channels.
-			unsigned int newFrames = newSamples.size() / config.channels;
-			unsigned int framesNeeded = config.blockSize - framesFilled;
+			unsigned int newFrames = newSamples.size() / config.m_channels;
+			unsigned int framesNeeded = config.m_blockSize - framesFilled;
 			unsigned int framesToCopy = std::min(newFrames, framesNeeded);
 			// For each frame, extract only the channels needed as defined by assignments.
 			for (unsigned int i = 0; i < framesToCopy; i++) {
 				for (unsigned int m = 0; m < assignments.size(); m++) {
 					// Use the physical signal channel defined in the assignment.
 					int ph = assignments[m].sigChannel;
-					processingBuffer[(framesFilled + i) * procChannels + m] = newSamples[i * config.channels + ph];
+					processingBuffer[(framesFilled + i) * procChannels + m] = newSamples[i * config.m_channels + ph];
 				}
 			}
 			framesFilled += framesToCopy;
 		}
 		else {
 			// Mix mode: capture code already returns mixed samples.
-			size_t samplesToProcess = std::min(newSamples.size(), config.blockSize - framesFilled);
+			size_t samplesToProcess = std::min(newSamples.size(), config.m_blockSize - framesFilled);
 			std::copy(newSamples.begin(), newSamples.begin() + samplesToProcess, processingBuffer.begin() + framesFilled);
 			framesFilled += samplesToProcess;
 		}
 
 		// Process once we have a full block.
-		if (framesFilled >= config.blockSize) {
+		if (framesFilled >= config.m_blockSize) {
 			syncChecker.processSampleBlock(processingBuffer);
 
 			// Calculate hop size based on overlap (in frames) and shift processed data.
-			size_t overlapFrames = (config.blockSize * config.overlapPercent) / 100;
-			size_t hopFrames = config.blockSize - overlapFrames;
+			size_t overlapFrames = (config.m_blockSize * config.m_overlapPercent) / 100;
+			size_t hopFrames = config.m_blockSize - overlapFrames;
 			if (overlapFrames > 0) {
-				if (config.multichannel) {
-					std::copy(processingBuffer.begin() + hopFrames * procChannels, processingBuffer.begin() + config.blockSize * procChannels,
+				if (config.m_multichannel) {
+					std::copy(processingBuffer.begin() + hopFrames * procChannels, processingBuffer.begin() + config.m_blockSize * procChannels,
 							  processingBuffer.begin());
 				}
 				else {
-					std::copy(processingBuffer.begin() + hopFrames, processingBuffer.begin() + config.blockSize, processingBuffer.begin());
+					std::copy(processingBuffer.begin() + hopFrames, processingBuffer.begin() + config.m_blockSize, processingBuffer.begin());
 				}
 				framesFilled = overlapFrames;
 			}
@@ -457,10 +528,10 @@ int main(int argc, char *argv[])
 				framesFilled = 0;
 			}
 
-			statsUpdateTime += float(hopFrames) / config.sampleRate;
+			statsUpdateTime += float(hopFrames) / config.m_sampleRate;
 
 			// Update statistics visualization at the configured refresh rate.
-			if (statsUpdateTime >= config.statsRefreshRate) {
+			if (statsUpdateTime >= config.m_statsRefreshRate) {
 				// getDelayStats now returns a vector of tuples:
 				// (ChannelAssignment, filtered delay, confidence, filtered PSLR)
 				std::vector<std::tuple<FFTSyncCheck::ChannelAssignment, float, float, float>> estimates = syncChecker.getDelayStats();
