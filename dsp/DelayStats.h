@@ -5,15 +5,69 @@
 #include <cmath>
 
 /**
+ * @brief Structure for holding the delay calculation results.
+ */
+struct DelayCalculationResult {
+	float delay_ms;
+	float pslr_dB;
+	float ref_rms_dB;
+	float sig_rms_dB;
+
+	DelayCalculationResult()
+		: delay_ms(0.0f)
+		, pslr_dB(0.0f)
+		, ref_rms_dB(0.0f)
+		, sig_rms_dB(0.0f)
+	{
+	}
+
+	DelayCalculationResult(float delay_ms, float pslr_dB, float ref_rms_dB, float sig_rms_dB)
+		: delay_ms(delay_ms)
+		, pslr_dB(pslr_dB)
+		, ref_rms_dB(ref_rms_dB)
+		, sig_rms_dB(sig_rms_dB)
+	{
+	}
+};
+
+/**
  * @brief Structure for tracking delay measurements and statistics.
  */
 struct DelayStats {
-	static const int HISTORY_SIZE = 5;	///< Number of measurements to keep.
-	std::vector<float> m_history;		///< History of delay measurements.
-	std::vector<float> m_pslrHistory;	///< History of PSLR measurements.
-	float m_filteredDelay;				///< Filtered (median) delay.
-	float m_filteredPSLR;				///< Filtered (median) PSLR.
-	float m_confidence;					///< Confidence metric based on variance.
+	/**
+	 * @brief Number of measurements to keep.
+	 */
+	static const int HISTORY_SIZE = 5;
+
+	/**
+	 * @brief History of measurements.
+	 */
+	std::vector<DelayCalculationResult> m_history;
+
+	/**
+	 * @brief Filtered (median) delay.
+	 */
+	float m_filteredDelay;
+
+	/**
+	 * @brief Filtered (median) PSLR.
+	 */
+	float m_filteredPSLR;
+
+	/**
+	 * @brief Filtered (median) reference RMS.
+	 */
+	float m_filteredRefRMS;
+
+	/**
+	 * @brief Filtered (median) signal RMS.
+	 */
+	float m_filteredSigRMS;
+
+	/**
+	 * @brief Confidence metric based on variance.
+	 */
+	float m_confidence;
 
 	DelayStats()
 		: m_filteredDelay(0.0f)
@@ -21,45 +75,35 @@ struct DelayStats {
 		, m_confidence(0.0f)
 	{
 		m_history.reserve(HISTORY_SIZE);
-		m_pslrHistory.reserve(HISTORY_SIZE);
 	}
 
 	/**
 	 * @brief Update delay statistics with a new measurement.
 	 *
-	 * @param new_delay New delay measurement in seconds.
-	 * @param new_pslr New PSLR measurement in dB.
+	 * @param result New delay calculation result containing delay, PSLR and RMS measurements.
 	 */
-	void update(float new_delay, float new_pslr)
+	void update(DelayCalculationResult result)
 	{
 		if (m_history.size() >= HISTORY_SIZE) {
 			m_history.erase(m_history.begin());
-			m_pslrHistory.erase(m_pslrHistory.begin());
 		}
-		m_history.push_back(new_delay);
-		m_pslrHistory.push_back(new_pslr);
+		m_history.push_back(result);
 
-		// by default use median
-		std::vector<float> sorted = m_history;
-		std::sort(sorted.begin(), sorted.end());
-		m_filteredDelay = sorted[sorted.size() / 2];
-
-		std::vector<float> sortedPSLR = m_pslrHistory;
-		std::sort(sortedPSLR.begin(), sortedPSLR.end());
-		m_filteredPSLR = sortedPSLR[sortedPSLR.size() / 2];
+		// Calculate medians
+		m_filteredDelay = calculateMedian(&DelayCalculationResult::delay_ms);
+		m_filteredPSLR = calculateMedian(&DelayCalculationResult::pslr_dB);
+		m_filteredRefRMS = calculateMedian(&DelayCalculationResult::ref_rms_dB);
+		m_filteredSigRMS = calculateMedian(&DelayCalculationResult::sig_rms_dB);
 
 		// Use Median Absolute Deviation (MAD) to handle outliers
 		if (m_history.size() == HISTORY_SIZE) {
-			// Calculate median
-			std::vector<float> sorted = m_history;
-			std::sort(sorted.begin(), sorted.end());
-			float median = sorted[sorted.size() / 2];
+			float median = m_filteredDelay;
 
 			// Calculate absolute deviations from median
 			std::vector<float> deviations;
 			deviations.reserve(HISTORY_SIZE);
-			for (float val : m_history) {
-				deviations.push_back(fabsf(val - median));
+			for (const auto& res : m_history) {
+				deviations.push_back(fabsf(res.delay_ms - median));
 			}
 
 			// Calculate MAD (median of absolute deviations)
@@ -71,11 +115,12 @@ struct DelayStats {
 			const float MAD_SCALE = 1.4826f;	  // 1/Φ^(-1)(3/4) where Φ is normal CDF
 			const float OUTLIER_THRESHOLD = 3.0f; // Points >3σ from median considered outliers
 			float scaled_mad = mad * MAD_SCALE;	  // Convert MAD to equivalent std deviation
-			std::vector<float> inliers;
 
-			for (float val : m_history) {
-				if (fabsf(val - median) <= OUTLIER_THRESHOLD * scaled_mad) {
-					inliers.push_back(val);
+			std::vector<float> inliers;
+			inliers.reserve(HISTORY_SIZE);
+			for (const auto& res : m_history) {
+				if (fabsf(res.delay_ms - median) <= OUTLIER_THRESHOLD * scaled_mad) {
+					inliers.push_back(res.delay_ms);
 				}
 			}
 
@@ -86,13 +131,35 @@ struct DelayStats {
 			}
 		}
 
-		// Calculate confidence based on variance.
+		// Calculate confidence based on variance
 		float sum = 0.0f;
-		for (float d : m_history) {
-			float diff = d - m_filteredDelay;
+		for (const auto& res : m_history) {
+			float diff = res.delay_ms - m_filteredDelay;
 			sum += diff * diff;
 		}
 		float variance = sum / m_history.size();
 		m_confidence = 1.0f / (1.0f + sqrtf(variance));
+	}
+
+private:
+
+	/**
+	 * @brief Calculate median value from history using specified accessor function
+	 * @param accessor Function to access the desired property from DelayCalculationResult
+	 * @return Median value of the specified property
+	 */
+	float calculateMedian(float (DelayCalculationResult::* accessor)) const
+	{
+		if (m_history.empty()) {
+			return 0.0f;
+		}
+
+		std::vector<float> values;
+		values.reserve(m_history.size());
+		for (const auto& result : m_history) {
+			values.push_back(result.*accessor);
+		}
+		std::sort(values.begin(), values.end());
+		return values[values.size() / 2];
 	}
 };

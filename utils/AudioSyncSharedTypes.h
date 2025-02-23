@@ -31,6 +31,8 @@ struct CorrelationData {
 	float m_delay = 0.0f;
 	float m_confidence = 0.0f;
 	float m_pslr = 0.0f;
+	float m_refRMS = 0.0f;
+	float m_sigRMS = 0.0f;
 
 	// Raw correlation data
 	float m_correlationData[MAX_CORRELATION_SAMPLES];

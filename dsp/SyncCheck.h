@@ -28,6 +28,38 @@ public:
 	};
 
 	/**
+	 * @brief Report structure for delay statistics.
+	 */
+	struct DelayStatsReport {
+		ChannelAssignment assignment;
+		float filteredDelay;
+		float filteredPSLR;
+		float confidence;
+		float filteredRefRMS;
+		float filteredSigRMS;
+
+		DelayStatsReport()
+			: assignment()
+			, filteredDelay(0.0f)
+			, filteredPSLR(0.0f)
+			, confidence(0.0f)
+			, filteredRefRMS(0.0f)
+			, filteredSigRMS(0.0f)
+		{
+		}
+
+		DelayStatsReport(ChannelAssignment assignment, float filteredDelay, float filteredPSLR, float confidence, float filteredRefRMS, float filteredSigRMS)
+			: assignment(assignment)
+			, filteredDelay(filteredDelay)
+			, filteredPSLR(filteredPSLR)
+			, confidence(confidence)
+			, filteredRefRMS(filteredRefRMS)
+			, filteredSigRMS(filteredSigRMS)
+		{
+		}
+	};
+
+	/**
 	 * @brief Constructs the FFTSyncCheck object.
 	 *
 	 * @param config Configuration object for the sync checker
@@ -70,7 +102,7 @@ public:
 	 * @param sigBand Frequency band index in the signal data
 	 * @return A pair containing the calculated delay (in milliseconds) and PSLR (in dB)
 	 */
-	std::pair<float, float> calculateBandDelayFFT(const std::vector<kiss_fft_cpx>& fft_data_ref,
+	DelayCalculationResult calculateBandDelayFFT(const std::vector<kiss_fft_cpx>& fft_data_ref,
 		const std::vector<kiss_fft_cpx>& fft_data_sig,
 		std::size_t refBand, std::size_t sigBand);
 
@@ -113,7 +145,7 @@ public:
 	 *
 	 * @return Vector of tuples with channel assignment and delay statistics.
 	 */
-	std::vector<std::tuple<ChannelAssignment, float, float, float>> getDelayStats() const;
+	std::vector<DelayStatsReport> getDelayStats() const;
 
 	/**
 	 * @brief Get the sample rate.

@@ -72,7 +72,7 @@ public:
 	 * @param estimates Vector of tuples containing (ChannelAssignment, delay, confidence, PSLR) for each assignment.
 	 * @param timestamp Accumulated time (in seconds) from syncAnalyzer, used as timestamp.
 	 */
-	void visualizeDelays(const std::vector<std::tuple<FFTSyncCheck::ChannelAssignment, float, float, float>> &estimates, float timestamp)
+	void visualizeDelays(const std::vector<FFTSyncCheck::DelayStatsReport> &estimates, float timestamp)
 	{
 		std::stringstream ss;
 		ss << std::fixed << std::setprecision(3);
@@ -83,10 +83,12 @@ public:
 
 		// Process each assignment.
 		for (size_t i = 0; i < estimates.size(); ++i) {
-			const FFTSyncCheck::ChannelAssignment &assignment = std::get<0>(estimates[i]);
-			const double delay = std::get<1>(estimates[i]);
-			const double confidence = std::get<2>(estimates[i]);
-			const double pslr = std::get<3>(estimates[i]);
+			const FFTSyncCheck::ChannelAssignment &assignment = estimates[i].assignment;
+			const double delay = estimates[i].filteredDelay;
+			const double confidence = estimates[i].confidence;
+			const double pslr = estimates[i].filteredPSLR;
+			const double refRMS = estimates[i].filteredRefRMS;
+			const double sigRMS = estimates[i].filteredSigRMS;
 
 			// Skip if the assignment is to the same channel and band.
 			if (assignment.refChannel == assignment.sigChannel && assignment.refBand == assignment.sigBand) {
@@ -110,7 +112,7 @@ public:
 			   << "Time: " << formatTime(timestamp) << ", "
 			   << assignStr << ": "
 			   << std::setw(8) << delay << " ms [PSLR: "
-			   << std::setw(6) << pslr << " dB, confidence: " << std::setw(6) << confidence << "]"
+			   << std::setw(6) << pslr << " dB, confidence: " << std::setw(6) << confidence << ", refRMS: " << std::setw(6) << refRMS << " dB, sigRMS: " << std::setw(6) << sigRMS << " dB]"
 			   << (m_useColors ? ANSI_COLOR_RESET : "") << " |";
 
 			int center = m_width / 2;
@@ -137,10 +139,12 @@ public:
 				// CSV dumping: one row per valid assignment.
 				// CSV format: timestamp,dumpId,refChannel,refBand,sigChannel,sigBand,delay,confidence,pslr
 				for (size_t i = 0; i < estimates.size(); ++i) {
-					const FFTSyncCheck::ChannelAssignment &assignment = std::get<0>(estimates[i]);
-					const double delay = std::get<1>(estimates[i]);
-					const double confidence = std::get<2>(estimates[i]);
-					const double pslr = std::get<3>(estimates[i]);
+					const FFTSyncCheck::ChannelAssignment &assignment = estimates[i].assignment;
+					const double delay = estimates[i].filteredDelay;
+					const double confidence = estimates[i].confidence;
+					const double pslr = estimates[i].filteredPSLR;
+					const double refRMS = estimates[i].filteredRefRMS;
+					const double sigRMS = estimates[i].filteredSigRMS;
 
 					if (assignment.refChannel == assignment.sigChannel && assignment.refBand == assignment.sigBand) {
 						continue;
@@ -154,7 +158,9 @@ public:
 					             << assignment.sigBand << ","
 					             << std::fixed << std::setprecision(3) << delay << ","
 					             << std::fixed << std::setprecision(3) << confidence << ","
-					             << std::fixed << std::setprecision(3) << pslr << std::endl;
+					             << std::fixed << std::setprecision(3) << pslr << ","
+					             << std::fixed << std::setprecision(3) << refRMS << ","
+					             << std::fixed << std::setprecision(3) << sigRMS << std::endl;
 				}
 				m_dumpId++;
 			} else {
@@ -162,10 +168,12 @@ public:
 				m_outputFile << "Time: " << formatTime(timestamp) << ", ";
 				m_outputFile << std::setw(6) << m_dumpId++ << ", ";
 				for (size_t i = 0; i < estimates.size(); ++i) {
-					const FFTSyncCheck::ChannelAssignment &assignment = std::get<0>(estimates[i]);
-					const double delay = std::get<1>(estimates[i]);
-					const double confidence = std::get<2>(estimates[i]);
-					const double pslr = std::get<3>(estimates[i]);
+					const FFTSyncCheck::ChannelAssignment &assignment = estimates[i].assignment;
+					const double delay = estimates[i].filteredDelay;
+					const double confidence = estimates[i].confidence;
+					const double pslr = estimates[i].filteredPSLR;
+					const double refRMS = estimates[i].filteredRefRMS;
+					const double sigRMS = estimates[i].filteredSigRMS;
 
 					if (assignment.refChannel == assignment.sigChannel && assignment.refBand == assignment.sigBand) {
 						continue;
@@ -176,7 +184,7 @@ public:
 					m_outputFile << "Assignment " << assignStr << ": "
 					             << std::fixed << std::setprecision(3) << std::setw(8) << delay
 					             << " ms, confidence: " << std::setw(5) << confidence << ", PSLR: "
-					             << std::fixed << std::setprecision(3) << std::setw(5) << pslr;
+					             << std::fixed << std::setprecision(3) << std::setw(5) << pslr << ", refRMS: " << std::setw(5) << refRMS << " dB, sigRMS: " << std::setw(5) << sigRMS << " dB";
 					if (i < estimates.size() - 1)
 						m_outputFile << ", ";
 				}

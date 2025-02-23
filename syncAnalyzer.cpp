@@ -523,8 +523,8 @@ int main(int argc, char *argv[])
 		// Update statistics visualization at the configured refresh rate.
 		if (statsUpdateTime >= config.m_statsRefreshRate) {
 			// getDelayStats now returns a vector of tuples:
-			// (ChannelAssignment, filtered delay, confidence, filtered PSLR)
-			std::vector<std::tuple<FFTSyncCheck::ChannelAssignment, float, float, float>> estimates = syncChecker.getDelayStats();
+			// (ChannelAssignment, filtered delay, confidence, filtered PSLR, filtered reference RMS, filtered signal RMS)
+			std::vector<FFTSyncCheck::DelayStatsReport> estimates = syncChecker.getDelayStats();
 			visualizer.visualizeDelays(estimates, totalTime);
 			statsUpdateTime = 0.0f;
 		}

@@ -14,3 +14,13 @@ STFTWindowGenerator::STFTWindowGenerator(int windowLength, int overlap, WindowTy
 }
 
 STFTWindowGenerator::~STFTWindowGenerator() = default;
+
+double STFTWindowGenerator::getAnalysisWindowRMS() const
+{
+	return m_analysisWindowRMS;
+}
+
+double STFTWindowGenerator::getSynthesisWindowRMS() const
+{
+	return m_synthesisWindowRMS;
+}

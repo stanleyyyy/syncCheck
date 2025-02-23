@@ -52,6 +52,18 @@ public:
 	 */
 	int getHopSize() const { return m_hopSize; }
 
+	/**
+	 * @brief Returns the RMS value of the analysis window.
+	 * @return RMS value of the analysis window.
+	 */
+	double getAnalysisWindowRMS() const;
+
+	/**
+	 * @brief Returns the RMS value of the synthesis window.
+	 * @return RMS value of the synthesis window.
+	 */
+	double getSynthesisWindowRMS() const;
+
 private:
 	/**
 	 * @brief Generates the analysis and synthesis windows based on the selected window type.
@@ -124,6 +136,19 @@ private:
 		for (int n = 0; n < m_windowLength; n++) {
 			m_synthesisWindow[n] *= boost;
 		}
+
+		// Calculate RMS of the analysis and synthesis windows.
+		double sum_squared = 0.0;
+		for (double w : m_analysisWindow) {
+			sum_squared += w * w;
+		}
+		m_analysisWindowRMS = std::sqrt(sum_squared / m_windowLength);
+
+		sum_squared = 0.0;
+		for (double w : m_synthesisWindow) {
+			sum_squared += w * w;
+		}
+		m_synthesisWindowRMS = std::sqrt(sum_squared / m_windowLength);
 	}
 
 	int m_windowLength;
@@ -132,4 +157,6 @@ private:
 	WindowType m_type;
 	std::vector<double> m_analysisWindow;
 	std::vector<double> m_synthesisWindow;
+	double m_analysisWindowRMS;
+	double m_synthesisWindowRMS;
 };

@@ -127,7 +127,7 @@ float FFTSyncCheck::computePSLR(const std::vector<float> &corr, int exclusion_ra
 	return pslr_db;
 }
 
-std::pair<float, float> FFTSyncCheck::calculateBandDelayFFT(const std::vector<kiss_fft_cpx> &fft_data_ref, const std::vector<kiss_fft_cpx> &fft_data_sig,
+DelayCalculationResult FFTSyncCheck::calculateBandDelayFFT(const std::vector<kiss_fft_cpx> &fft_data_ref, const std::vector<kiss_fft_cpx> &fft_data_sig,
 															std::size_t refBand, std::size_t sigBand)
 {
 	// Get configuration parameters.
@@ -152,7 +152,17 @@ std::pair<float, float> FFTSyncCheck::calculateBandDelayFFT(const std::vector<ki
 	m_correlationData.resize(orig_freq_size);
 	std::fill(m_correlationData.begin(), m_correlationData.end(), kiss_fft_cpx { 0.0f, 0.0f });
 
-	// Compute the normalized cross-correlation product for the band.
+	// Add RMS calculation for reference and signal bands
+	float ref_band_power = 0.0f;
+	float sig_band_power = 0.0f;
+
+	// Scale factor to convert FFT power to RMS
+	// For real FFT: 2/N for amplitude scaling (except DC and Nyquist)
+	// Window compensation: divide by RMS of window
+	float window_rms = m_windowGenerator->getAnalysisWindowRMS();
+	float fft_to_rms = 1.0f / (blockSize * window_rms);
+
+	// Compute cross-correlation and band power
 	for (std::size_t i = 0; i < band_width; i++) {
 		std::size_t bin_ref = ref_start + i;
 		std::size_t bin_sig = sig_start + i;
@@ -162,17 +172,29 @@ std::pair<float, float> FFTSyncCheck::calculateBandDelayFFT(const std::vector<ki
 			float real_sig = fft_data_sig[bin_sig].r;
 			float imag_sig = fft_data_sig[bin_sig].i;
 
+			// Calculate power in the band
+			// Multiply by 2 for all bins except DC and Nyquist to account for negative frequencies
+			float power_scale = (bin_ref == 0 || bin_ref == orig_freq_size - 1) ? 1.0f : 2.0f;
+			ref_band_power += (real_ref * real_ref + imag_ref * imag_ref) * power_scale;
+			sig_band_power += (real_sig * real_sig + imag_sig * imag_sig) * power_scale;
+
 			float mag_ref = sqrtf(real_ref * real_ref + imag_ref * imag_ref);
 			float mag_sig = sqrtf(real_sig * real_sig + imag_sig * imag_sig);
 
 			if (mag_ref > 1e-10f && mag_sig > 1e-10f) {
 				float scale = 1.0f / (mag_ref * mag_sig);
 				m_correlationData[bin_ref].r = (real_ref * real_sig + imag_ref * imag_sig) * scale;
-				// Multiply the imaginary component by -1 to reverse the delay sign.
 				m_correlationData[bin_ref].i = -(imag_ref * real_sig - real_ref * imag_sig) * scale;
 			}
 		}
 	}
+
+	// Calculate RMS in dB (relative to full scale = 1.0)
+	float ref_rms = sqrtf(ref_band_power) * fft_to_rms;
+	float sig_rms = sqrtf(sig_band_power) * fft_to_rms;
+
+	float ref_rms_db = 20.0f * log10f(ref_rms + 1e-10f);
+	float sig_rms_db = 20.0f * log10f(sig_rms + 1e-10f);
 
 	// Prepare padded frequency domain buffer.
 	m_correlationDataPadded.resize(padded_freq_size);
@@ -185,7 +207,7 @@ std::pair<float, float> FFTSyncCheck::calculateBandDelayFFT(const std::vector<ki
 	// Inverse FFT - prepare an output buffer with padded_size samples.
 	if (!m_paddedFftProcessor->inverse(m_correlationDataPadded, m_paddedTimeData, true)) {
 		DBG_ERROR("Inverse FFT failed.");
-		return std::make_pair(0.0f, 0.0f);
+		return DelayCalculationResult(0.0f, 0.0f, 0.0f, 0.0f);
 	}
 
 	// SHIFT the data so that zero-lag is in the middle.
@@ -287,7 +309,7 @@ std::pair<float, float> FFTSyncCheck::calculateBandDelayFFT(const std::vector<ki
 	float delay = (interpolated_idx - (float)(padded_size / 2)) / (static_cast<float>(m_config.getSampleRate()) * interpFactor);
 	delay *= 1000.0f; // ms
 
-	return std::make_pair(delay, pslr_db);
+	return DelayCalculationResult(delay, pslr_db, ref_rms_db, sig_rms_db);
 }
 
 /**
@@ -408,7 +430,7 @@ void FFTSyncCheck::processSampleBlock(const std::vector<float>& samples)
 
 				// if makes no sense to calculate cross-correlation for the same channel and band
 				if (assign.refChannel == assign.sigChannel && assign.refBand == assign.sigBand) {
-					m_delayStats[i].update(0.0f, 0.0f);
+					m_delayStats[i].update(DelayCalculationResult());
 					continue;
 				}
 
@@ -416,10 +438,12 @@ void FFTSyncCheck::processSampleBlock(const std::vector<float>& samples)
 				const auto &fftDataRef = m_channelFFTs[assign.refChannel];
 				const auto &fftDataSig = m_channelFFTs[assign.sigChannel];
 
-				// Calculate delay and PSLR using the chosen bands (assign.refBand and assign.sigBand).
-				// (Assumes calculateBandDelayFFT() is appropriately overloaded.)
-				auto [delay, pslr] = calculateBandDelayFFT(fftDataRef, fftDataSig, assign.refBand, assign.sigBand);
-				m_delayStats[i].update(delay, pslr);
+				// Calculate delay and PSLR using the chosen bands
+				auto result = calculateBandDelayFFT(fftDataRef, fftDataSig, assign.refBand, assign.sigBand);
+				m_delayStats[i].update(result);
+
+				// Optionally store or use the RMS levels
+				// You may want to add these to DelayStats structure if needed
 			}
 
 			if (m_config.getCorrelationDumpEnabled())
@@ -458,18 +482,19 @@ float FFTSyncCheck::getFilteredDelay(std::size_t assignment)
  *
  * @return Vector of tuples with channel assignment and delay statistics.
  */
-std::vector<std::tuple<FFTSyncCheck::ChannelAssignment, float, float, float>> FFTSyncCheck::getDelayStats() const
+std::vector<FFTSyncCheck::DelayStatsReport> FFTSyncCheck::getDelayStats() const
 {
-	std::vector<std::tuple<ChannelAssignment, float, float, float>> delays;
-	delays.reserve(m_delayStats.size());
+	std::vector<FFTSyncCheck::DelayStatsReport> reports;
+	reports.reserve(m_delayStats.size());
 	for (std::size_t i = 0; i < m_delayStats.size(); i++) {
 		ChannelAssignment assignment;
 		if (i < m_channelAssignments.size()) {
 			assignment = m_channelAssignments[i];
 		}
-		delays.emplace_back(assignment, m_delayStats[i].m_filteredDelay, m_delayStats[i].m_confidence, m_delayStats[i].m_filteredPSLR);
+
+		reports.emplace_back(assignment, m_delayStats[i].m_filteredDelay, m_delayStats[i].m_filteredPSLR, m_delayStats[i].m_confidence, m_delayStats[i].m_filteredRefRMS, m_delayStats[i].m_filteredSigRMS);
 	}
-	return delays;
+	return reports;
 }
 
 void FFTSyncCheck::setMultiChannelMode(const std::size_t numChannels)
