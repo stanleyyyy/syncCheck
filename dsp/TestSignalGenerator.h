@@ -90,6 +90,8 @@ private:
 	SyncCheckConfig m_config;
 	std::unique_ptr<SyncSignalGenerator<float>> m_syncSignalGenerator;
 	std::vector<BandProcessor> m_bandProcessors;
+	std::unique_ptr<HilbertShifter> m_hilbertShifterBackground;
+	std::unique_ptr<HilbertShifter> m_hilbertShifterReference;
 	std::vector<std::unique_ptr<DelayLine>> m_delayLines;
 	std::vector<int> m_delayFrames;
 	std::mt19937 m_rng;

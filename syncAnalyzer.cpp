@@ -31,7 +31,7 @@ struct AppConfig
 	/**
 	 * @brief Audio output device.
 	 */
-	std::string m_outputDevice;
+	std::string m_playbackDevice = "";
 
 	/**
 	 * @brief Sample rate.
@@ -225,7 +225,7 @@ std::pair<bool, AppConfig> parseCommandLine(int argc, char *argv[])
 			config.m_dumpStatsFileName = optarg;
 			break;
 		case 'O':
-			config.m_outputDevice = optarg;
+			config.m_playbackDevice = optarg;
 			break;
 		case 'n':
 			config.m_useColors = false;
@@ -312,8 +312,7 @@ int main(int argc, char *argv[])
 	}
 
 	// If no mapping is specified, default to mix mode.
-	if (config.m_sources.empty())
-	{
+	if (config.m_sources.empty()) {
 		config.m_sources = "mix";
 	}
 
@@ -324,15 +323,14 @@ int main(int argc, char *argv[])
 	// (Assuming config.m_captureDevice still holds the device string.)
 	std::unique_ptr<AudioSource> capture;
 	if (config.m_captureDevice.find("file://") == 0) {
-		capture = std::make_unique<FileCapture>(config.m_captureDevice, config.m_periodSize, config.m_multichannel);
+		capture = std::make_unique<FileCapture>(config.m_captureDevice, config.m_periodSize);
 	} else {
 		capture = std::make_unique<AlsaCapture>(config.m_captureDevice,
 			config.m_channels,
 			config.m_format,
 			config.m_sampleRate,
 			config.m_periodSize,
-			config.m_periods,
-			config.m_multichannel);
+			config.m_periods);
 	}
 
 	// After capture initialization, update sampleRate and channels accordingly.
@@ -342,18 +340,18 @@ int main(int argc, char *argv[])
 	// Initialize playback device if requested.
 	// (AlsaPlayback has been updated similarly to use individual output parameters.)
 	std::unique_ptr<AlsaPlayback> playback;
-	if (!config.m_outputDevice.empty()) {
-		playback = std::make_unique<AlsaPlayback>(config.m_outputDevice,
+	if (!config.m_playbackDevice.empty()) {
+		playback = std::make_unique<AlsaPlayback>(config.m_playbackDevice,
 			config.m_channels,
 			config.m_format,
 			config.m_sampleRate,
 			config.m_periodSize,
 			config.m_periods);
 		if (!playback->isInitialized()) {
-			DBG_ERROR("Failed to initialize audio output device: " << config.m_outputDevice);
+			DBG_ERROR("Failed to initialize audio output device: " << config.m_playbackDevice);
 			return 1;
 		}
-		DBG_INFO("Audio output enabled on device: " << config.m_outputDevice);
+		DBG_INFO("Audio output enabled on device: " << config.m_playbackDevice);
 	}
 
 	// Initialize visualizer
@@ -391,8 +389,8 @@ int main(int argc, char *argv[])
 			FFTSyncCheck::ChannelAssignment assign;
 			assign.refChannel = 0;
 			assign.sigChannel = 0;
-			assign.refBand = band;
-			assign.sigBand = 0;
+			assign.sigBand = band;
+			assign.refBand = 0;
 			assignments.push_back(assign);
 		}
 		syncChecker.setMultiChannelMode(1);
@@ -437,8 +435,7 @@ int main(int argc, char *argv[])
 	// For per‑channel processing, we need blockSize frames × (number of assignments).
 	unsigned int procChannels = (config.m_sources == "mix") ? 1 : (unsigned int)assignments.size();
 	std::vector<float> processingBuffer(config.m_blockSize * procChannels, 0.0f);
-	// 'framesFilled' counts how many complete frames have been copied.
-	size_t framesFilled = 0;
+
 	float statsUpdateTime = 0.0f;
 	float totalTime = 0.0f;
 
@@ -456,7 +453,7 @@ int main(int argc, char *argv[])
 		std::string dumpFileName = ss.str();
 
 		sfInfo.samplerate = config.m_sampleRate;
-		sfInfo.channels = procChannels;
+		sfInfo.channels = config.m_channels;
 		sfInfo.format = SF_FORMAT_WAV | SF_FORMAT_FLOAT;
 
 		dumpFile = sf_open(dumpFileName.c_str(), SFM_WRITE, &sfInfo);
@@ -474,8 +471,8 @@ int main(int argc, char *argv[])
 	}
 
 	while (g_running) {
-		std::vector<float> newSamples = capture->captureBlock();
-		if (newSamples.empty()) {
+		std::vector<float> inputBuffer = capture->captureBlock();
+		if (inputBuffer.empty()) {
 			DBG_ERROR("Capture returned empty buffer. Processing stopped.");
 			g_running = false;
 			break;
@@ -483,68 +480,53 @@ int main(int argc, char *argv[])
 
 		// If playback is enabled, write the captured block to the audio output.
 		if (playback) {
-			playback->playBlock(newSamples);
-		}
-
-		if (config.m_multichannel) {
-			// In non-mix mode, newSamples is interleaved over config.channels.
-			unsigned int newFrames = newSamples.size() / config.m_channels;
-			unsigned int framesNeeded = config.m_blockSize - framesFilled;
-			unsigned int framesToCopy = std::min(newFrames, framesNeeded);
-			// For each frame, extract only the channels needed as defined by assignments.
-			for (unsigned int i = 0; i < framesToCopy; i++) {
-				for (unsigned int m = 0; m < assignments.size(); m++) {
-					// Use the physical signal channel defined in the assignment.
-					int ph = assignments[m].sigChannel;
-					processingBuffer[(framesFilled + i) * procChannels + m] = newSamples[i * config.m_channels + ph];
-				}
-			}
-			framesFilled += framesToCopy;
-		}
-		else {
-			// Mix mode: capture code already returns mixed samples.
-			size_t samplesToProcess = std::min(newSamples.size(), config.m_blockSize - framesFilled);
-			std::copy(newSamples.begin(), newSamples.begin() + samplesToProcess, processingBuffer.begin() + framesFilled);
-			framesFilled += samplesToProcess;
-		}
-
-		// Process once we have a full block.
-		if (framesFilled >= config.m_blockSize) {
-			syncChecker.processSampleBlock(processingBuffer);
-
-			// Calculate hop size based on overlap (in frames) and shift processed data.
-			size_t overlapFrames = (config.m_blockSize * config.m_overlapPercent) / 100;
-			size_t hopFrames = config.m_blockSize - overlapFrames;
-			if (overlapFrames > 0) {
-				if (config.m_multichannel) {
-					std::copy(processingBuffer.begin() + hopFrames * procChannels, processingBuffer.begin() + config.m_blockSize * procChannels,
-							  processingBuffer.begin());
-				}
-				else {
-					std::copy(processingBuffer.begin() + hopFrames, processingBuffer.begin() + config.m_blockSize, processingBuffer.begin());
-				}
-				framesFilled = overlapFrames;
-			}
-			else {
-				framesFilled = 0;
-			}
-
-			statsUpdateTime += float(hopFrames) / config.m_sampleRate;
-			totalTime += float(hopFrames) / config.m_sampleRate;
-
-			// Update statistics visualization at the configured refresh rate.
-			if (statsUpdateTime >= config.m_statsRefreshRate) {
-				// getDelayStats now returns a vector of tuples:
-				// (ChannelAssignment, filtered delay, confidence, filtered PSLR)
-				std::vector<std::tuple<FFTSyncCheck::ChannelAssignment, float, float, float>> estimates = syncChecker.getDelayStats();
-				visualizer.visualizeDelays(estimates, totalTime);
-				statsUpdateTime = 0.0f;
-			}
+			playback->playBlock(inputBuffer);
 		}
 
 		// If dumping is enabled, write the (raw) new samples.
 		if (dumpFile) {
-			sf_writef_float(dumpFile, newSamples.data(), newSamples.size() / procChannels);
+			sf_writef_float(dumpFile, inputBuffer.data(), inputBuffer.size() / config.m_channels);
+		}
+
+		// How many frames have we got?
+		const std::size_t numFrames = inputBuffer.size() / config.m_channels;
+
+		if (config.m_multichannel) {
+			// In non-mix mode, inputBuffer is interleaved over config.channels.
+			processingBuffer.resize(numFrames * config.m_channels);
+			// For each frame, extract only the channels needed as defined by assignments.
+			for (unsigned int i = 0; i < numFrames; i++) {
+				for (unsigned int m = 0; m < assignments.size(); m++) {
+					// Use the physical signal channel defined in the assignment.
+					int ph = assignments[m].sigChannel;
+					processingBuffer[(i) * procChannels + m] = inputBuffer[i * config.m_channels + ph];
+				}
+			}
+		}
+		else {
+			// Mix mode. Mix all channels together.
+			processingBuffer.resize(numFrames);
+			std::fill(processingBuffer.begin(), processingBuffer.end(), 0.0f);
+			for (unsigned int j = 0; j < config.m_channels; j++) {
+				for (unsigned int i = 0; i < numFrames; i++) {
+					processingBuffer[i] += inputBuffer[i * config.m_channels + j] / config.m_channels;
+				}
+			}
+		}
+
+		// process everything
+		syncChecker.processSampleBlock(processingBuffer);
+
+		statsUpdateTime += float(numFrames) / config.m_sampleRate;
+		totalTime += float(numFrames) / config.m_sampleRate;
+
+		// Update statistics visualization at the configured refresh rate.
+		if (statsUpdateTime >= config.m_statsRefreshRate) {
+			// getDelayStats now returns a vector of tuples:
+			// (ChannelAssignment, filtered delay, confidence, filtered PSLR)
+			std::vector<std::tuple<FFTSyncCheck::ChannelAssignment, float, float, float>> estimates = syncChecker.getDelayStats();
+			visualizer.visualizeDelays(estimates, totalTime);
+			statsUpdateTime = 0.0f;
 		}
 	}
 

@@ -76,7 +76,7 @@ static snd_pcm_sframes_t bandmover_transfer(snd_pcm_extplug_t *ext,
 					bandmover->config->getBands()[0].getStartFreq(),
 					bandmover->config->getBands()[bandmover->config->getNumBands() - 1].getEndFreq()
 				};
-				bandmover->processor->processBlockWithShift(bandmover->processing_buffer, bandmover->processing_buffer, block_output, clearBand);
+				bandmover->processor->frequencyShift(bandmover->processing_buffer, bandmover->processing_buffer, block_output, clearBand);
 
 				// Add processed samples (hop_size) to output buffer
 				if (bandmover->available_output_samples + hop_size <= bandmover->output_buffer.size()) {

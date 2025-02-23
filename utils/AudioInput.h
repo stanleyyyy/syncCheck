@@ -24,12 +24,10 @@ private:
 	// Use individual members instead:
 	std::string m_filePath;
 	unsigned int m_periodSize;
-	bool m_multichannel;
 	unsigned int m_channels;
 	unsigned int m_sampleRate;
 	SNDFILE *m_file;
 	SF_INFO m_sfInfo;
-	std::vector<float> m_buffer;
 	bool m_initialized;
 
 public:
@@ -37,11 +35,9 @@ public:
 	 * @brief Constructor for FileCapture.
 	 * @param captureDevice Path to audio file (may include a "file://" prefix).
 	 * @param periodSize Number of frames per capture block.
-	 * @param multichannel Flag indicating whether to capture multichannel data.
 	 */
-	FileCapture(const std::string &captureDevice, unsigned int periodSize, bool multichannel)
+	FileCapture(const std::string &captureDevice, unsigned int periodSize)
 		: m_periodSize(periodSize)
-		, m_multichannel(multichannel)
 		, m_file(nullptr)
 		, m_initialized(false)
 	{
@@ -62,8 +58,6 @@ public:
 		// Override file properties.
 		m_channels = m_sfInfo.channels;
 		m_sampleRate = m_sfInfo.samplerate;
-
-		m_buffer.resize(m_periodSize * m_channels);
 		m_initialized = true;
 
 		DBG_INFO("Opened audio file: " << m_filePath);
@@ -84,41 +78,22 @@ public:
 	std::vector<float> captureBlock() override
 	{
 		std::vector<float> output;
+		output.resize(m_periodSize * m_channels, 0.0f);
+
 		if (!isInitialized()) {
-			// Return silence.
-			if (m_multichannel)
-				output.resize(m_periodSize * m_channels, 0.0f);
-			else
-				output.resize(m_periodSize, 0.0f);
-			return output;
+			// Return empty buffer to signalize EOF
+			return std::vector<float>();
 		}
 
-		sf_count_t framesRead = sf_readf_float(m_file, m_buffer.data(), m_periodSize);
 
+		sf_count_t framesRead = sf_readf_float(m_file, output.data(), m_periodSize);
 		if (framesRead == 0) {
 			// End of file. return empty buffer.
-			return output;
+			return std::vector<float>();
 		}
 
-		if (m_multichannel) {
-			std::vector<float> multiOutput(framesRead * m_channels, 0.0f);
-			std::copy(m_buffer.begin(), m_buffer.begin() + framesRead * m_channels, multiOutput.begin());
-			if (framesRead < static_cast<sf_count_t>(m_periodSize))
-				std::fill(multiOutput.begin() + framesRead * m_channels, multiOutput.end(), 0.0f);
-			return multiOutput;
-		}
-		else {
-			std::vector<float> mixedOutput(framesRead, 0.0f);
-			for (sf_count_t i = 0; i < framesRead; ++i) {
-				float sum = 0.0f;
-				for (unsigned int ch = 0; ch < m_channels; ++ch)
-					sum += m_buffer[i * m_channels + ch];
-				mixedOutput[i] = sum / m_channels;
-			}
-			if (framesRead < static_cast<sf_count_t>(m_periodSize))
-				mixedOutput.resize(m_periodSize, 0.0f);
-			return mixedOutput;
-		}
+		output.resize(framesRead * m_channels);
+		return output;
 	}
 
 	unsigned int getSampleRate() const override { return m_sampleRate; }
@@ -135,7 +110,6 @@ private:
 	unsigned int m_sampleRate;
 	snd_pcm_uframes_t m_periodSize;
 	unsigned int m_periods;
-	bool m_multichannel;
 	snd_pcm_t *m_handle;
 	std::vector<uint8_t> m_buffer;
 	unsigned int m_frameSize;
@@ -150,17 +124,15 @@ public:
 	 * @param sampleRate Desired sample rate.
 	 * @param periodSize Period size in frames.
 	 * @param periods Number of periods.
-	 * @param multichannel Flag indicating whether to capture multichannel data.
 	 */
 	AlsaCapture(const std::string &device, unsigned int channels, snd_pcm_format_t format, unsigned int sampleRate, unsigned int periodSize,
-				unsigned int periods, bool multichannel)
+				unsigned int periods)
 		: m_device(device)
 		, m_channels(channels)
 		, m_format(format)
 		, m_sampleRate(sampleRate)
 		, m_periodSize(periodSize)
 		, m_periods(periods)
-		, m_multichannel(multichannel)
 		, m_handle(nullptr)
 		, m_frameSize(0)
 		, m_initialized(false)
@@ -235,10 +207,7 @@ public:
 		std::vector<float> floatBuffer;
 		if (!isInitialized()) {
 			DBG_ERROR("AlsaCapture not properly initialized");
-			if (m_multichannel)
-				floatBuffer.resize(m_periodSize * m_channels, 0.0f);
-			else
-				floatBuffer.resize(m_periodSize, 0.0f);
+			floatBuffer.resize(m_periodSize * m_channels, 0.0f);
 			return floatBuffer;
 		}
 
@@ -246,81 +215,43 @@ public:
 		if (err == -EPIPE) {
 			DBG_WARN("Buffer overrun detected, recovering...");
 			snd_pcm_prepare(m_handle);
-			if (m_multichannel)
-				floatBuffer.resize(m_periodSize * m_channels, 0.0f);
-			else
-				floatBuffer.resize(m_periodSize, 0.0f);
+			floatBuffer.resize(m_periodSize * m_channels, 0.0f);
 			return floatBuffer;
 		}
 		else if (err < 0) {
 			DBG_ERROR("Error reading from PCM device: " << std::string(snd_strerror(err)));
-			if (m_multichannel)
-				floatBuffer.resize(m_periodSize * m_channels, 0.0f);
-			else
-				floatBuffer.resize(m_periodSize, 0.0f);
+			floatBuffer.resize(m_periodSize * m_channels, 0.0f);
 			return floatBuffer;
 		}
 
 		const uint8_t *src = m_buffer.data();
 
-		if (m_multichannel) {
-			std::vector<float> multiBuffer(err * m_channels, 0.0f);
-			for (size_t i = 0; i < static_cast<size_t>(err); ++i) {
-				for (unsigned int ch = 0; ch < m_channels; ++ch) {
-					switch (m_format) {
-					case SND_PCM_FORMAT_S16_LE: {
-						const int16_t *samples = reinterpret_cast<const int16_t *>(src);
-						multiBuffer[i * m_channels + ch] = samples[i * m_channels + ch] / 32768.0f;
-						break;
-					}
-					case SND_PCM_FORMAT_S32_LE: {
-						const int32_t *samples = reinterpret_cast<const int32_t *>(src);
-						multiBuffer[i * m_channels + ch] = samples[i * m_channels + ch] / 2147483648.0f;
-						break;
-					}
-					case SND_PCM_FORMAT_FLOAT_LE: {
-						const float *samples = reinterpret_cast<const float *>(src);
-						multiBuffer[i * m_channels + ch] = samples[i * m_channels + ch];
-						break;
-					}
-					default:
-						DBG_ERROR("Unsupported format");
-						return multiBuffer;
-					}
+		std::vector<float> multiBuffer(err * m_channels, 0.0f);
+		for (size_t i = 0; i < static_cast<size_t>(err); ++i) {
+			for (unsigned int ch = 0; ch < m_channels; ++ch) {
+				switch (m_format) {
+				case SND_PCM_FORMAT_S16_LE: {
+					const int16_t *samples = reinterpret_cast<const int16_t *>(src);
+					multiBuffer[i * m_channels + ch] = samples[i * m_channels + ch] / 32768.0f;
+					break;
+				}
+				case SND_PCM_FORMAT_S32_LE: {
+					const int32_t *samples = reinterpret_cast<const int32_t *>(src);
+					multiBuffer[i * m_channels + ch] = samples[i * m_channels + ch] / 2147483648.0f;
+					break;
+				}
+				case SND_PCM_FORMAT_FLOAT_LE: {
+					const float *samples = reinterpret_cast<const float *>(src);
+					multiBuffer[i * m_channels + ch] = samples[i * m_channels + ch];
+					break;
+				}
+				default:
+					DBG_ERROR("Unsupported format");
+					return multiBuffer;
 				}
 			}
-			return multiBuffer;
 		}
-		else {
-			std::vector<float> mixedBuffer(err, 0.0f);
-			for (size_t i = 0; i < static_cast<size_t>(err); ++i) {
-				float sample = 0.0f;
-				for (unsigned int ch = 0; ch < m_channels; ++ch) {
-					switch (m_format) {
-					case SND_PCM_FORMAT_S16_LE: {
-						const int16_t *samples = reinterpret_cast<const int16_t *>(src);
-						sample += samples[i * m_channels + ch] / 32768.0f;
-						break;
-					}
-					case SND_PCM_FORMAT_S32_LE: {
-						const int32_t *samples = reinterpret_cast<const int32_t *>(src);
-						sample += samples[i * m_channels + ch] / 2147483648.0f;
-						break;
-					}
-					case SND_PCM_FORMAT_FLOAT_LE: {
-						const float *samples = reinterpret_cast<const float *>(src);
-						sample += samples[i * m_channels + ch];
-						break;
-					}
-					default:
-						DBG_ERROR("Unsupported format");
-						return mixedBuffer;
-					}
-				}
-				mixedBuffer[i] = sample / m_channels;
-			}
-			return mixedBuffer;
-		}
+		return multiBuffer;
 	}
 
 	unsigned int getSampleRate() const override { return m_sampleRate; }

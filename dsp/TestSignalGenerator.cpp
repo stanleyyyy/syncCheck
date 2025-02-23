@@ -137,6 +137,9 @@ void TestSignalGenerator::init(std::vector<float> &delays)
 	for (std::size_t band = 0; band < m_config.getNumBands(); band++) {
 		m_bandProcessors.emplace_back(m_config, m_config.getBands()[band]);
 	}
+
+	m_hilbertShifterBackground = std::make_unique<HilbertShifter>(m_config.getBlockSize(), m_config.getHopSize(), m_config.getSampleRate());
+	m_hilbertShifterReference = std::make_unique<HilbertShifter>(m_config.getBlockSize(), m_config.getHopSize(), m_config.getSampleRate());
 }
 
 void TestSignalGenerator::generateReferenceSignal(std::vector<float> &output, std::size_t numFrames)
@@ -219,19 +222,18 @@ void TestSignalGenerator::renderAudioBlock(std::vector<float> &output)
 			std::copy(referenceData.begin(), referenceData.end(), m_referenceBuffer.end() - m_config.getHopSize());
 			std::fill(m_backgroundBuffer.end() - m_config.getHopSize(), m_backgroundBuffer.end(), 0.0f);
 
-			// Compute FFT of the full processing and background buffers.
-			std::vector<kiss_fft_cpx> backgroundFreq;
-			m_bandProcessors[0].forward(m_backgroundBuffer, backgroundFreq);
-
-			std::vector<kiss_fft_cpx> referenceFreq;
-			m_bandProcessors[0].forward(m_referenceBuffer, referenceFreq);
-
 			// Define clearBand covering all bands.
 			const SyncCheckConfig::Band clearBand = { m_config.getBands()[0].getStartFreq(), m_config.getBands()[m_config.getNumBands() - 1].getEndFreq() };
 
-			// Generate each band of test signal by shifting the FFT data of the reference signal
+			// Prepare analytic signals for frequency shifting.
+			// This uses required part of reference signal spectrum.
+			std::vector<kiss_fft_cpx> analyticBackground;
+			std::vector<kiss_fft_cpx> analyticReference;
+			m_bandProcessors[0].prepareAnalyticSignals(m_backgroundBuffer, m_referenceBuffer, analyticBackground, analyticReference, clearBand);
+
+			// Apply frequency shift to the analytic reference signal.
 			for (std::size_t band = 0; band < m_config.getNumBands(); band++) {
-				m_bandProcessors[band].processBlockWithShiftFFT(backgroundFreq, referenceFreq, m_bandOutputs[band], clearBand);
+				m_bandProcessors[band].frequencyShift(analyticBackground, analyticReference, m_bandOutputs[band]);
 			}
 
 			// Process delay lines and optionally write each band's hop to WAV.

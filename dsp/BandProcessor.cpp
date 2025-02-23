@@ -4,50 +4,40 @@
 BandProcessor::BandProcessor(const SyncCheckConfig &config, const SyncCheckConfig::Band &band)
 	: m_config(config)
 	, m_stftProcessor(std::make_unique<STFTProcessor>(config.getBlockSize(), config.getHopSize()))
+	, m_hilbertShifterBackground(std::make_unique<HilbertShifter>(config.getBlockSize(), config.getHopSize(), config.getSampleRate()))
+	, m_hilbertShifterReference(std::make_unique<HilbertShifter>(config.getBlockSize(), config.getHopSize(), config.getSampleRate()))
 	, m_band(band)
 	, m_workingFreqData(config.getBlockSize() / 2 + 1)
 	, m_inBandPower(0.0)
 	, m_outBandPower(0.0)
 {
-	// Determine an optimal taper fraction.
-	// For example, if a desired transition width is 500 Hz then
-	// taperFraction = desiredTransitionWidth / bandWidth, limited to 0.5 at most.
-	float desiredTransitionWidth = 500.0f; // Hz
-	float bandWidthHz = m_band.getEndFreq() - m_band.getStartFreq();
-	m_shiftTaperFraction = computeTaperFraction(desiredTransitionWidth, bandWidthHz);
-
-	// Precompute the taper window for the shifting band defined by m_band.
-	std::size_t bandStartBin = m_band.getStartBin(m_config.getBlockSize(), m_config.getSampleRate());
-	std::size_t bandEndBin = m_band.getEndBin(m_config.getBlockSize(), m_config.getSampleRate());
-	std::size_t shiftBinCount = (bandEndBin >= bandStartBin) ? (bandEndBin - bandStartBin + 1) : 0;
-	m_shiftTaper = computeTaperWindow(shiftBinCount, m_shiftTaperFraction);
 }
 
 BandProcessor::BandProcessor(const BandProcessor &other)
 	: m_config(other.m_config)
 	, m_stftProcessor(std::make_unique<STFTProcessor>(other.m_config.getBlockSize(), other.m_config.getHopSize()))
+	, m_hilbertShifterBackground(std::make_unique<HilbertShifter>(other.m_config.getBlockSize(), other.m_config.getHopSize(), other.m_config.getSampleRate()))
+	, m_hilbertShifterReference(std::make_unique<HilbertShifter>(other.m_config.getBlockSize(), other.m_config.getHopSize(), other.m_config.getSampleRate()))
 	, m_band(other.m_band)
 	, m_workingFreqData(other.m_workingFreqData)
 	, m_inBandPower(other.m_inBandPower)
 	, m_outBandPower(other.m_outBandPower)
-	, m_shiftTaper(other.m_shiftTaper)
-	, m_clearTaper(other.m_clearTaper)
-	, m_shiftTaperFraction(other.m_shiftTaperFraction)
-	, m_clearTaperFraction(other.m_clearTaperFraction)
+	, m_referenceTaper(other.m_referenceTaper)
+	, m_backgroundTaper(other.m_backgroundTaper)
 {
 }
 
 BandProcessor::BandProcessor(BandProcessor &&other) noexcept
 	: m_config(other.m_config)
 	, m_stftProcessor(std::move(other.m_stftProcessor))
+	, m_hilbertShifterBackground(std::move(other.m_hilbertShifterBackground))
+	, m_hilbertShifterReference(std::move(other.m_hilbertShifterReference))
 	, m_band(other.m_band)
 	, m_workingFreqData(std::move(other.m_workingFreqData))
 	, m_inBandPower(other.m_inBandPower)
 	, m_outBandPower(other.m_outBandPower)
-	, m_shiftTaper(std::move(other.m_shiftTaper))
-	, m_clearTaper(std::move(other.m_clearTaper))
-	, m_shiftTaperFraction(other.m_shiftTaperFraction)
-	, m_clearTaperFraction(other.m_clearTaperFraction)
+	, m_referenceTaper(std::move(other.m_referenceTaper))
+	, m_backgroundTaper(std::move(other.m_backgroundTaper))
 {
 }
 
@@ -58,14 +48,14 @@ BandProcessor &BandProcessor::operator=(const BandProcessor &other)
 	if (this != &other) {
 		m_config = other.m_config;
 		m_stftProcessor = std::make_unique<STFTProcessor>(other.m_config.getBlockSize(), other.m_config.getHopSize());
+		m_hilbertShifterBackground = std::make_unique<HilbertShifter>(other.m_config.getBlockSize(), other.m_config.getHopSize(), other.m_config.getSampleRate());
+		m_hilbertShifterReference = std::make_unique<HilbertShifter>(other.m_config.getBlockSize(), other.m_config.getHopSize(), other.m_config.getSampleRate());
 		m_band = other.m_band;
 		m_workingFreqData = other.m_workingFreqData;
 		m_inBandPower = other.m_inBandPower;
 		m_outBandPower = other.m_outBandPower;
-		m_shiftTaper = other.m_shiftTaper;
-		m_clearTaper = other.m_clearTaper;
-		m_shiftTaperFraction = other.m_shiftTaperFraction;
-		m_clearTaperFraction = other.m_clearTaperFraction;
+		m_referenceTaper = other.m_referenceTaper;
+		m_backgroundTaper = other.m_backgroundTaper;
 	}
 	return *this;
 }
@@ -75,14 +65,13 @@ BandProcessor &BandProcessor::operator=(BandProcessor &&other) noexcept
 	if (this != &other) {
 		m_config = other.m_config;
 		m_stftProcessor = std::move(other.m_stftProcessor);
+		m_hilbertShifterBackground = std::move(other.m_hilbertShifterBackground);
 		m_band = other.m_band;
 		m_workingFreqData = std::move(other.m_workingFreqData);
 		m_inBandPower = other.m_inBandPower;
 		m_outBandPower = other.m_outBandPower;
-		m_shiftTaper = std::move(other.m_shiftTaper);
-		m_clearTaper = std::move(other.m_clearTaper);
-		m_shiftTaperFraction = other.m_shiftTaperFraction;
-		m_clearTaperFraction = other.m_clearTaperFraction;
+		m_referenceTaper = std::move(other.m_referenceTaper);
+		m_backgroundTaper = std::move(other.m_backgroundTaper);
 	}
 	return *this;
 }
@@ -139,26 +128,6 @@ void BandProcessor::processBlockFFT(const std::vector<kiss_fft_cpx> &fft_data, s
 	m_stftProcessor->inverse(frames, output);
 }
 
-void BandProcessor::processBlockWithShift(const std::vector<float>& input_background,
-										const std::vector<float>& input_to_shift,
-										std::vector<float>& output,
-										const SyncCheckConfig::Band &clearBand)
-{
-	ASSERT_WITH_ERROR(input_background.size() == m_config.getBlockSize(), "Input background block size must match the configured block size.");
-	ASSERT_WITH_ERROR(input_to_shift.size() == m_config.getBlockSize(), "Input to shift block size must match the configured block size.");
-	ASSERT_WITH_ERROR(output.size() == m_config.getBlockSize(), "Output block size must match the configured block size.");
-
-	// Perform STFT analysis on both signals
-	auto frames_background = m_stftProcessor->forward(input_background);
-	auto frames_to_shift = m_stftProcessor->forward(input_to_shift);
-
-	if (frames_background.empty() || frames_to_shift.empty()) {
-		return;
-	}
-
-	processBlockWithShiftFFT(frames_background[0], frames_to_shift[0], output, clearBand);
-}
-
 float BandProcessor::getBandIsolation() const
 {
 	return 10.0f * log10f(m_inBandPower / (m_outBandPower + 1e-10f));
@@ -178,93 +147,95 @@ void BandProcessor::forward(const std::vector<float>& input, std::vector<kiss_ff
 	std::copy(frames[0].begin(), frames[0].end(), output.begin());
 }
 
-void BandProcessor::processBlockWithShiftFFT(const std::vector<kiss_fft_cpx> &fft_data_background, const std::vector<kiss_fft_cpx> &fft_data_to_shift,
-											 std::vector<float> &output, const SyncCheckConfig::Band &clearBand)
+void BandProcessor::frequencyShift(const std::vector<float> &background, const std::vector<float> &reference, std::vector<float> &output, const SyncCheckConfig::Band &clearBand)
 {
-	output.resize(m_config.getBlockSize());
-	ASSERT_WITH_ERROR(output.size() == m_config.getBlockSize(), "Output block size must match the configured block size.");
+	// Prepare analytic signals for frequency shifting.
+	// This combines background spectrum with reference signal and converts it to analytic time domain signal.
+	prepareAnalyticSignals(background, reference, m_analyticBackground, m_analyticReference, clearBand);
 
-	std::size_t clearStartBin = clearBand.getStartBin(m_config.getBlockSize(), m_config.getSampleRate());
-	std::size_t clearEndBin = clearBand.getEndBin(m_config.getBlockSize(), m_config.getSampleRate());
-	std::size_t bandStartBin = m_band.getStartBin(m_config.getBlockSize(), m_config.getSampleRate());
-	std::size_t bandEndBin = m_band.getEndBin(m_config.getBlockSize(), m_config.getSampleRate());
+	// Shift the analytic signal to the target band.
+	frequencyShift(m_analyticBackground, m_analyticReference, output);
+}
 
-	m_inBandPower = 0.0f;
-	m_outBandPower = 0.0f;
+void BandProcessor::prepareAnalyticSignals(const std::vector<float>& background, const std::vector<float>& reference,
+										std::vector<kiss_fft_cpx>& analyticBackground, std::vector<kiss_fft_cpx>& analyticReference,
+										const SyncCheckConfig::Band &clearBand)
+{
+	ASSERT_WITH_ERROR(background.size() == m_config.getBlockSize(), "Input background block size must match the configured block size.");
+	ASSERT_WITH_ERROR(reference.size() == m_config.getBlockSize(), "Input to shift block size must match the configured block size.");
+	const std::size_t fftSize = m_config.getBlockSize();
+	analyticBackground.resize(m_config.getHopSize());
+	analyticReference.resize(m_config.getHopSize());
 
-	// Copy background into working frequency data. Do not copy anything after the clear band end bin.
-	std::copy(fft_data_background.begin(), fft_data_background.begin() + clearEndBin, m_workingFreqData.begin());
+	// Perform short time Hilbert transform on both signals
+	std::vector<kiss_fft_cpx> backgroundfreq;
+	std::vector<kiss_fft_cpx> referencefreq;
 
-	// Zero out the rest of the frequency data
-	std::fill(m_workingFreqData.begin() + clearEndBin, m_workingFreqData.end(), kiss_fft_cpx{0.0f, 0.0f});
+	//
+	// Create analytic frequency domain signal for background
+	//
 
-	const double sampleRate = static_cast<double>(m_config.getSampleRate());
-	const double blockSize = static_cast<double>(m_config.getBlockSize());
+	m_hilbertShifterBackground->forward(background, backgroundfreq);
 
-	// Recompute the taper window for the clear band if it has changed.
-	std::size_t clearBinCount = clearEndBin - clearStartBin + 1;
-	if (clearBinCount != m_clearTaper.size()) {
-		float desiredTransitionWidth = 500.0f; // Hz
+	// Clear unwanted bands in the background spectrum
+	std::size_t clearStartBin = clearBand.getStartBin(fftSize, m_config.getSampleRate());
+	std::size_t clearEndBin   = fftSize / 2 + 1;
+	std::size_t clearBinCount = (clearEndBin >= clearStartBin) ? (clearEndBin - clearStartBin + 1) : 0;
+
+	// Recompute the taper window if the number of bands has changed
+	if (clearBinCount != m_backgroundTaper.size()) {
 		float bandWidthHz = clearBand.getEndFreq() - clearBand.getStartFreq();
-		m_clearTaperFraction = computeTaperFraction(desiredTransitionWidth, bandWidthHz);
-		m_clearTaper = computeTaperWindow(clearBinCount, m_clearTaperFraction, true);
+		float backgroundTaperFraction = computeTaperFraction(500, bandWidthHz);
+		m_backgroundTaper = computeTaperWindow(clearBinCount, backgroundTaperFraction);
 	}
 
-	// Start clearing earlier so that when the taper ends, we will get fully cleared band
-	const std::size_t clearTaperLength = m_clearTaperFraction * (clearEndBin - clearStartBin + 1);
-	if (clearStartBin > clearTaperLength)
-		clearStartBin -= clearTaperLength;
-	else
-		clearStartBin = 0;
+	// Apply the taper window to the background spectrum
+	std::transform(backgroundfreq.begin(), backgroundfreq.begin() + clearBinCount, m_backgroundTaper.begin(), backgroundfreq.begin(),
+				   [](kiss_fft_cpx &val, float windowVal) { return kiss_fft_cpx{val.r * windowVal, val.i * windowVal}; });
 
-	for (std::size_t i = clearStartBin, j = 0; i <= clearEndBin && i < m_workingFreqData.size() && j < m_clearTaper.size(); i++, j++) {
-		float taper = m_clearTaper[j];
-		// Multiply by (1 - taper) so that the band is smoothly cleared.
-		m_workingFreqData[i].r *= (1.0f - taper);
-		m_workingFreqData[i].i *= (1.0f - taper);
+	// Inverse the background analytical spectrum to time domain to get the background time domain analyticalsignal.
+	m_hilbertShifterBackground->inverse(backgroundfreq, analyticBackground);
+
+	//
+	// Create analytic frequency domain signal for reference
+	//
+
+	m_hilbertShifterReference->forward(reference, referencefreq);
+
+	// Prepare the reference spectrum for frequency shifting.
+	// We will take only required part of the reference spectrum, we will apply taper window to it
+	// to minimize the effect of Gibbs phenomenon and clear the rest of the spectrum.
+	std::size_t bandStartBin = m_config.getBands()[0].getStartBin(fftSize, m_config.getSampleRate());
+	std::size_t bandEndBin   = m_config.getBands()[0].getEndBin(fftSize, m_config.getSampleRate());
+	std::size_t shiftBinCount = (bandEndBin >= bandStartBin) ? (bandEndBin - bandStartBin + 1) : 0;
+
+	// Recompute the taper window if the number of bands has changed
+	if (shiftBinCount != m_referenceTaper.size()) {
+		float bandWidthHz = m_band.getEndFreq() - m_band.getStartFreq();
+		float referenceTaperFraction = computeTaperFraction(500, bandWidthHz);
+		m_referenceTaper = computeTaperWindow(shiftBinCount, referenceTaperFraction);
 	}
 
-	// --- Frequency shift with smooth cosine rolloff using the precomputed taper.
-	for (std::size_t i = 0, shiftBins = m_shiftTaper.size(); i < shiftBins && i < fft_data_to_shift.size(); i++) {
-		std::size_t srcBin = i;
-		std::size_t dstBin = bandStartBin + i;
-		if (dstBin >= m_workingFreqData.size()) {
-			continue;
-		}
+	// Apply the taper window to the background spectrum
+	std::transform(referencefreq.begin(), referencefreq.begin() + shiftBinCount, m_referenceTaper.begin(), referencefreq.begin(),
+				   [](kiss_fft_cpx &val, float windowVal) { return kiss_fft_cpx{val.r * windowVal, val.i * windowVal}; });
 
-		// Phase calculation based on source frequency.
-		double srcBinFrequency = (static_cast<double>(srcBin) * sampleRate) / blockSize;
-		double phaseOffset = srcBinFrequency * (2.0 * M_PI / sampleRate) * m_config.getBlockSize();
+	// Clear the rest of the reference spectrum
+	std::fill(referencefreq.begin() + shiftBinCount, referencefreq.end(), kiss_fft_cpx{0.0f, 0.0f});
 
-		double cosPhase = std::cos(phaseOffset);
-		double sinPhase = std::sin(phaseOffset);
+	// Inverse the background spectrum to time domain.
+	m_hilbertShifterReference->inverse(referencefreq, analyticReference);
+}
 
-		float re = fft_data_to_shift[srcBin].r;
-		float im = fft_data_to_shift[srcBin].i;
-		float taper = m_shiftTaper[i];
+void BandProcessor::frequencyShift(const std::vector<kiss_fft_cpx> &analyticBackground, const std::vector<kiss_fft_cpx> &analyticReference, std::vector<float> &output)
+{
+	// Shift the analytic input signal to the target band.
+	m_hilbertShifterReference->shift(analyticReference, output, m_band.getStartFreq());
 
-		// Apply phase shift and taper.
-		m_workingFreqData[dstBin].r = static_cast<float>((re * cosPhase - im * sinPhase) * taper);
-		m_workingFreqData[dstBin].i = static_cast<float>((re * sinPhase + im * cosPhase) * taper);
-
-		m_inBandPower += (re * re + im * im) * taper * taper;
+	// Sum the real part of the background time domain analytic signal and frequency shifted reference signal.
+	for (std::size_t i = 0; i < output.size(); i++) {
+		output[i] += analyticBackground[i].r;
 	}
-
-	// Accumulate power outside the band.
-	for (std::size_t i = 0; i < m_workingFreqData.size(); i++) {
-		if (i < bandStartBin || i > bandEndBin) {
-			float re = m_workingFreqData[i].r;
-			float im = m_workingFreqData[i].i;
-			m_outBandPower += (re * re + im * im);
-		}
-	}
-
-	// Create frames for inverse STFT.
-	std::vector<std::vector<kiss_fft_cpx>> frames;
-	frames.push_back(m_workingFreqData);
-
-	// Perform inverse STFT.
-	m_stftProcessor->inverse(frames, output);
 }
 
 void BandProcessor::inverse(const std::vector<std::vector<kiss_fft_cpx>> &frames, std::vector<float> &output)

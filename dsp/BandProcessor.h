@@ -1,6 +1,7 @@
 #pragma once
 
 #include "STFTProcessor.h"
+#include "HilbertShifter.h"
 #include <vector>
 #include <complex>
 #include <cstring>
@@ -57,6 +58,20 @@ public:
 	BandProcessor &operator=(BandProcessor &&other) noexcept;
 
 	/**
+	 * @brief Forward STFT via built-in STFT processor.
+	 * @param input Input time-domain data
+	 * @param output Output frequency-domain data
+	 */
+	void forward(const std::vector<float>& input, std::vector<kiss_fft_cpx>& output);
+
+	/**
+	 * @brief Inverse STFT via built-in STFT processor.
+	 * @param frames Input frames.
+	 * @param output Output buffer.
+	 */
+	void inverse(const std::vector<std::vector<kiss_fft_cpx>>& frames, std::vector<float>& output);
+
+	/**
 	 * @brief Process a block of input samples and produce an output block.
 	 *
 	 * @param input Reference to input samples.
@@ -74,13 +89,33 @@ public:
 
 	/**
 	 * @brief Process a block of samples with frequency shifting
-	 * @param input_background Reference to background input buffer
-	 * @param input_to_shift Reference to input buffer to shift
+	 * @param background Reference to background input buffer
+	 * @param reference Reference to input buffer to shift
 	 * @param output Reference to output buffer
 	 * @param clearBand Band to clear
 	 */
-	void processBlockWithShift(const std::vector<float>& input_background, const std::vector<float>& input_to_shift,
+	void frequencyShift(const std::vector<float>& background, const std::vector<float>& reference,
 							 std::vector<float>& output, const SyncCheckConfig::Band &clearBand);
+
+	/**
+	 * @brief Process a block of samples with frequency shifting
+	 * @param analyticBackground Reference to background input buffer
+	 * @param analyticReference Reference to input buffer to shift
+	 * @param output Reference to output buffer
+	 */
+	void frequencyShift(const std::vector<kiss_fft_cpx> &analyticBackground, const std::vector<kiss_fft_cpx> &analyticReference, std::vector<float> &output);
+
+	/**
+	 * @brief Prepare analytic signals for frequency shifting.
+	 * @param background Background input signal.
+	 * @param reference Signal to be shifted.
+	 * @param analyticBackground Output buffer for background signal.
+	 * @param analyticReference Output buffer for signal to shift.
+	 * @param clearBand Clear band.
+	 */
+	void prepareAnalyticSignals(const std::vector<float>& background, const std::vector<float>& reference,
+								std::vector<kiss_fft_cpx>& analyticBackground, std::vector<kiss_fft_cpx>& analyticReference,
+								const SyncCheckConfig::Band &clearBand);
 
 	/**
 	 * @brief Get the band isolation metric in dB.
@@ -88,32 +123,6 @@ public:
 	 * @return Band isolation in dB.
 	 */
 	float getBandIsolation() const;
-
-	/**
-	 * @brief Forward STFT via built-in STFT processor.
-	 * @param input Input time-domain data
-	 * @param output Output frequency-domain data
-	 */
-	void forward(const std::vector<float>& input, std::vector<kiss_fft_cpx>& output);
-
-	/**
-	 * @brief Inverse STFT via built-in STFT processor.
-	 * @param frames Input frames.
-	 * @param output Output buffer.
-	 */
-	void inverse(const std::vector<std::vector<kiss_fft_cpx>>& frames, std::vector<float>& output);
-
-	/**
-	 * @brief Process a block with frequency shifting using pre-computed FFT data
-	 * @param fft_data_background Background FFT data
-	 * @param fft_data_to_shift FFT data to shift
-	 * @param output Output buffer
-	 * @param clearBand Band to clear from background
-	 */
-	void processBlockWithShiftFFT(const std::vector<kiss_fft_cpx>& fft_data_background,
-								const std::vector<kiss_fft_cpx>& fft_data_to_shift,
-								std::vector<float>& output,
-								const SyncCheckConfig::Band& clearBand);
 
 private:
 	/**
@@ -133,6 +142,7 @@ private:
 	 * @return Taper fraction.
 	 */
 	static float computeTaperFraction(float desiredTransitionWidth, float bandWidthHz);
+
 private:
 	/**
 	 * @brief Configuration for the band processor.
@@ -143,6 +153,16 @@ private:
 	 * @brief STFT processor for signal analysis and synthesis.
 	 */
 	std::unique_ptr<STFTProcessor> m_stftProcessor;
+
+	/**
+	 * @brief Hilbert shifter for frequency shifting.
+	 */
+	std::unique_ptr<HilbertShifter> m_hilbertShifterBackground;
+
+	/**
+	 * @brief Hilbert shifter for frequency shifting.
+	 */
+	std::unique_ptr<HilbertShifter> m_hilbertShifterReference;
 
 	/**
 	 * @brief Reference to the associated frequency band.
@@ -167,20 +187,20 @@ private:
 	/**
 	 * @brief Precomputed taper window for the shifting band.
 	 */
-	std::vector<float> m_shiftTaper;
+	std::vector<float> m_referenceTaper;
 
 	/**
 	 * @brief Precomputed taper window for the clear band.
 	 */
-	std::vector<float> m_clearTaper;
+	std::vector<float> m_backgroundTaper;
 
 	/**
-	 * @brief Taper fraction (portion of the band over which tapering is applied).
+	 * @brief Working buffer for shifted full spectrum.
 	 */
-	float m_shiftTaperFraction;
+	std::vector<kiss_fft_cpx> m_analyticBackground;
 
 	/**
-	 * @brief Taper fraction (portion of the band over which tapering is applied).
+	 * @brief Working buffer for shifted full spectrum.
 	 */
-	float m_clearTaperFraction;
+	std::vector<kiss_fft_cpx> m_analyticReference;
 };
