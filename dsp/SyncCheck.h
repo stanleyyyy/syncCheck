@@ -162,6 +162,13 @@ public:
 	 */
 	void setChannelAssignments(const std::vector<ChannelAssignment>& assignments);
 
+	/**
+	 * @brief Get the correlation data for a specific channel assignment
+	 * @param assignment Channel assignment to get correlation data for
+	 * @return Vector of correlation data samples
+	 */
+	std::vector<float> getCorrelationData(const ChannelAssignment& assignment) const;
+
 private:
 	/**
 	 * @brief Configuration object
@@ -207,4 +214,7 @@ private:
 	std::vector<ChannelAssignment> m_channelAssignments;
 
 	int m_dumpCount = 0;
+
+	// Add storage for correlation data per assignment
+	std::vector<std::vector<float>> m_assignmentCorrelationData;
 };

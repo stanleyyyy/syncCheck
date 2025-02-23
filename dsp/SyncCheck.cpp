@@ -203,6 +203,23 @@ std::pair<float, float> FFTSyncCheck::calculateBandDelayFFT(const std::vector<ki
 	// Compute PSLR (Peak-to-Side-Lobe Ratio).
 	float pslr_db = computePSLR(m_paddedTimeData, padded_size / 64);
 
+	// Store correlation data for this assignment
+	if (m_assignmentCorrelationData.size() <= m_channelAssignments.size()) {
+		m_assignmentCorrelationData.resize(m_channelAssignments.size());
+	}
+
+	// Find assignment index
+	for (std::size_t i = 0; i < m_channelAssignments.size(); i++) {
+		const auto& assign = m_channelAssignments[i];
+		if (assign.refChannel == m_channelAssignments[i].refChannel &&
+			assign.refBand == refBand &&
+			assign.sigChannel == m_channelAssignments[i].sigChannel &&
+			assign.sigBand == sigBand) {
+			m_assignmentCorrelationData[i] = m_paddedTimeData;
+			break;
+		}
+	}
+
 	// Write out the correlation data for debugging if enabled
 	if (m_config.getCorrelationDumpEnabled()) {
 		char filename[256];
@@ -477,4 +494,25 @@ void FFTSyncCheck::setChannelAssignments(const std::vector<ChannelAssignment>& a
 	m_channelAssignments = assignments;
 	// Resize delay statistics vector to match the number of channel assignments.
 	m_delayStats.resize(assignments.size());
+}
+
+std::vector<float> FFTSyncCheck::getCorrelationData(const ChannelAssignment& assignment) const
+{
+	// If we don't have correlation data available, return empty vector.
+	if (m_assignmentCorrelationData.size() < m_channelAssignments.size()) {
+		return std::vector<float>();
+	}
+
+	// Find assignment index
+	for (std::size_t i = 0; i < m_channelAssignments.size(); i++) {
+		const auto& assign = m_channelAssignments[i];
+		if (assign.refChannel == assignment.refChannel &&
+			assign.refBand == assignment.refBand &&
+			assign.sigChannel == assignment.sigChannel &&
+			assign.sigBand == assignment.sigBand) {
+			return m_assignmentCorrelationData[i];
+		}
+	}
+
+	return std::vector<float>();
 }
