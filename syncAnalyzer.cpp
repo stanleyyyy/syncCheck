@@ -30,27 +30,27 @@ static volatile bool g_running = true;
 struct AppConfig
 {
 #ifdef BUILDTYPE_PC
-	std::string		captureDevice = "hw:1"; // file://out.wav";
+	std::string			captureDevice = "hw:1"; // file://out.wav";
 #else
-	std::string		captureDevice = "default";
+	std::string			captureDevice = "default";
 #endif
-	unsigned int	sampleRate = 48000;
-	snd_pcm_format_t format = SND_PCM_FORMAT_S16_LE;
-	std::string		outputFile;
-	bool			useColors = true;
-	unsigned int	channels = 2;      // Physical channel count
-	unsigned int	periodSize = 1024;
-	unsigned int	periods = 2;
-	unsigned int	blockSize = SyncCheckConfig::DEFAULT_BLOCK_SIZE;
-	unsigned int	overlapPercent = SyncCheckConfig::DEFAULT_OVERLAP_PERCENT;
-	unsigned int	numBands = SyncCheckConfig::DEFAULT_NUM_BANDS;
-	unsigned int	interpFactor = SyncCheckConfig::DEFAULT_INTERP_FACTOR;
-	unsigned int	startFreq = 16000;
-	unsigned int	freqRange = 4000;
-	unsigned int	bandSep = 200;
-	bool			dumpEnabled = false;
-	float			statsRefreshRate = 1.0f;  // Stats refresh rate in seconds
-	bool			dumpCorrelation = false;
+	unsigned int		sampleRate = 48000;
+	snd_pcm_format_t 	format = SND_PCM_FORMAT_S16_LE;
+	std::string			outputFile;
+	bool				useColors = true;
+	unsigned int		channels = 2;      // Physical channel count
+	snd_pcm_uframes_t	periodSize = 4096;
+	unsigned int		periods = 4;
+	unsigned int		blockSize = SyncCheckConfig::DEFAULT_BLOCK_SIZE;
+	unsigned int		overlapPercent = SyncCheckConfig::DEFAULT_OVERLAP_PERCENT;
+	unsigned int		numBands = SyncCheckConfig::DEFAULT_NUM_BANDS;
+	unsigned int		interpFactor = SyncCheckConfig::DEFAULT_INTERP_FACTOR;
+	unsigned int		startFreq = 16000;
+	unsigned int		freqRange = 8000;
+	unsigned int		bandSep = 200;
+	bool				dumpEnabled = false;
+	float				statsRefreshRate = 1.0f;  // Stats refresh rate in seconds
+	bool				dumpCorrelation = false;
 
 	/**
 	 * @brief Unified source mapping.
@@ -60,13 +60,18 @@ struct AppConfig
 	 * or in the form "physical:band" (e.g. "0:0,1:1" assigns physical channels 0 and 1
 	 * to band 0 and band 1 respectively).
 	 */
-	std::string		sources;
+	std::string sources;
 
 	/**
 	 * @brief Flag indicating whether to capture each physical channel individually.
 	 * If false, capture code will mix all channels.
 	 */
-	bool			multichannel = false;
+	bool multichannel = false;
+
+	/**
+	 * @brief ALSA output device.
+	 */
+	std::string outputDevice;
 };
 
 void signalHandler(int signum)
@@ -205,6 +210,7 @@ void printUsage(const char *programName)
 			  << "  -r, --rate=RATE        Sample rate (default: 48000)\n"
 			  << "  -f, --format=FORMAT    Sample format (S16_LE, S32_LE, FLOAT_LE) (default: S16_LE)\n"
 			  << "  -o, --output=FILE      Output statistics to file\n"
+			  << "  -O, --output-device=NAME ALSA output device name (default: none)\n"
 			  << "  -n, --no-colors        Disable ANSI colors in output\n"
 			  << "  -c, --channels=NUM     Number of input channels (default: 1)\n"
 			  << "  -p, --period-size=NUM  Period size (default: 1024)\n"
@@ -242,6 +248,7 @@ std::pair<bool, AppConfig> parseCommandLine(int argc, char *argv[])
 		{ "rate",			required_argument, 0, 'r' },
 		{ "format",			required_argument, 0, 'f' },
 		{ "output",			required_argument, 0, 'o' },
+		{ "output-device",	required_argument, 0, 'O' },
 		{ "no-colors",		no_argument,	   0, 'n' },
 		{ "channels",		required_argument, 0, 'c' },
 		{ "period-size",	required_argument, 0, 'p' },
@@ -261,7 +268,7 @@ std::pair<bool, AppConfig> parseCommandLine(int argc, char *argv[])
 	};
 
 	int opt;
-	while ((opt = getopt_long(argc, argv, "d:r:f:o:nc:p:s:h", long_options, nullptr)) != -1) {
+	while ((opt = getopt_long(argc, argv, "d:r:f:o:O:nc:p:s:h", long_options, nullptr)) != -1) {
 		switch (opt) {
 		case 'd':
 			config.captureDevice = optarg;
@@ -278,6 +285,9 @@ std::pair<bool, AppConfig> parseCommandLine(int argc, char *argv[])
 			break;
 		case 'o':
 			config.outputFile = optarg;
+			break;
+		case 'O':
+			config.outputDevice = optarg;
 			break;
 		case 'n':
 			config.useColors = false;
@@ -467,7 +477,7 @@ private:
 	unsigned int m_frameSize;
 
 public:
-	AlsaCapture(const AppConfig &config)
+	AlsaCapture(AppConfig &config)
 		: m_config(config)
 		, m_handle(nullptr)
 		, m_frameSize(0)
@@ -510,12 +520,12 @@ public:
 		// keep actual sample rate
 		m_config.sampleRate = rate;
 
-		if ((err = snd_pcm_hw_params_set_period_size(m_handle, hw_params, config.periodSize, 0)) < 0) {
+		if ((err = snd_pcm_hw_params_set_period_size_near(m_handle, hw_params, &config.periodSize, 0)) < 0) {
 			DBG_ERROR("Cannot set period size: " << std::string(snd_strerror(err)));
 			return;
 		}
 
-		if ((err = snd_pcm_hw_params_set_periods(m_handle, hw_params, config.periods, 0)) < 0) {
+		if ((err = snd_pcm_hw_params_set_periods_near(m_handle, hw_params, &config.periods, 0)) < 0) {
 			DBG_ERROR("Cannot set periods: " << std::string(snd_strerror(err)));
 			return;
 		}
@@ -649,6 +659,220 @@ public:
 	}
 };
 
+/**
+ * @brief ALSA playback class to output captured audio.
+ *
+ * This class opens an ALSA playback device using the details specified
+ * in the AppConfig (via outputDevice) and writes blocks of audio samples.
+ * It uses the same audio format as configured for ALSA capture and
+ * takes into account the multichannel flag. In mix mode (multichannel == false)
+ * the output is mono.
+ */
+class AlsaPlayback
+{
+private:
+	AppConfig m_config;
+	snd_pcm_t *m_handle;
+	unsigned int m_frameSize; // frame size in bytes for playback
+
+public:
+	/**
+	 * @brief Constructor that initializes the ALSA playback device.
+	 * @param config Application configuration (must have outputDevice set).
+	 */
+	AlsaPlayback(AppConfig &config)
+		: m_config(config)
+		, m_handle(nullptr)
+		, m_frameSize(0)
+	{
+		if (m_config.outputDevice.empty()) {
+			DBG_ERROR("Output device not specified in configuration");
+			return;
+		}
+
+		int err = snd_pcm_open(&m_handle, m_config.outputDevice.c_str(), SND_PCM_STREAM_PLAYBACK, 0);
+		if (err < 0) {
+			DBG_ERROR("Cannot open audio output device: " << m_config.outputDevice << " (" << snd_strerror(err) << ")");
+			return;
+		}
+
+		snd_pcm_hw_params_t *hw_params;
+		snd_pcm_hw_params_alloca(&hw_params);
+
+		err = snd_pcm_hw_params_any(m_handle, hw_params);
+		if (err < 0) {
+			DBG_ERROR("Cannot initialize hardware parameter structure for output device: " << m_config.outputDevice << " (" << snd_strerror(err) << ")");
+			return;
+		}
+
+		err = snd_pcm_hw_params_set_access(m_handle, hw_params, SND_PCM_ACCESS_RW_INTERLEAVED);
+		if (err < 0) {
+			DBG_ERROR("Cannot set access type for output device: " << m_config.outputDevice << " (" << snd_strerror(err) << ")");
+			return;
+		}
+
+		// Use the same audio format as in capture.
+		err = snd_pcm_hw_params_set_format(m_handle, hw_params, m_config.format);
+		if (err < 0) {
+			DBG_ERROR("Cannot set sample format for output device: " << m_config.outputDevice << " (" << snd_strerror(err) << ")");
+			return;
+		}
+
+		// Set playback channels following the multichannel flag:
+		// if multichannel is false (mix mode) then use 1 (mono) otherwise use config.channels.
+		unsigned int playbackChannels = m_config.multichannel ? m_config.channels : 1;
+		err = snd_pcm_hw_params_set_channels(m_handle, hw_params, playbackChannels);
+		if (err < 0) {
+			DBG_ERROR("Cannot set channel count for output device: " << m_config.outputDevice << " (" << snd_strerror(err) << ")");
+			return;
+		}
+
+		unsigned int rate = m_config.sampleRate;
+		err = snd_pcm_hw_params_set_rate_near(m_handle, hw_params, &rate, 0);
+		if (err < 0) {
+			DBG_ERROR("Cannot set sample rate for output device: " << m_config.outputDevice << " (" << snd_strerror(err) << ")");
+			return;
+		}
+		m_config.sampleRate = rate;
+
+		snd_pcm_uframes_t bufferSize = m_config.periodSize * m_config.periods;
+		err = snd_pcm_hw_params_set_buffer_size_near(m_handle, hw_params, &bufferSize);
+		if (err < 0) {
+			DBG_ERROR("Cannot set buffer size for output device: " << m_config.outputDevice << " (" << snd_strerror(err) << ")");
+			return;
+		}
+
+		err = snd_pcm_hw_params_set_period_size_near(m_handle, hw_params, &m_config.periodSize, 0);
+		if (err < 0) {
+			DBG_ERROR("Cannot set period size for output device: " << m_config.outputDevice << " (" << snd_strerror(err) << ")");
+			return;
+		}
+
+		err = snd_pcm_hw_params(m_handle, hw_params);
+		if (err < 0) {
+			DBG_ERROR("Cannot set hardware parameters for output device: " << m_config.outputDevice << " (" << snd_strerror(err) << ")");
+			return;
+		}
+
+		snd_pcm_sw_params_t *swParams;
+		snd_pcm_sw_params_alloca(&swParams);
+
+		if ((err = snd_pcm_sw_params_current(m_handle, swParams)) < 0) {
+			DBG_ERROR("Unable to determine current swparams for playback: " << snd_strerror(err));
+			return;
+		}
+
+		if ((err = snd_pcm_sw_params_get_start_threshold(swParams, &bufferSize)) < 0) {
+			DBG_ERROR("Unable to get start threshold mode for playback: " << snd_strerror(err));
+			return;
+		}
+
+		if ((err = snd_pcm_sw_params(m_handle, swParams)) < 0) {
+			DBG_ERROR("Unable to set sw params for playback: " << snd_strerror(err));
+			return;
+		}
+
+		// m_frameSize is based on the actual number of channels used for playback.
+		m_frameSize = (snd_pcm_format_width(m_config.format) / 8) * playbackChannels;
+		DBG_INFO("Audio output device initialized: " << m_config.outputDevice);
+	}
+
+	/**
+	 * @brief Destructor that closes the ALSA playback device.
+	 */
+	~AlsaPlayback()
+	{
+		if (m_handle) {
+			snd_pcm_close(m_handle);
+		}
+	}
+
+	/**
+	 * @brief Checks if the playback device was successfully initialized.
+	 * @return True if initialized, false otherwise.
+	 */
+	bool isInitialized() const { return m_handle != nullptr; }
+
+	/**
+	 * @brief Plays a block of audio samples.
+	 *
+	 * Converts captured floating point samples into the configured
+	 * audio format before writing to the output device, taking into account
+	 * the multichannel flag. In mix mode, each frame consists of one sample.
+	 *
+	 * @param samples Vector containing audio samples in floating point.
+	 * @return True if playback was successful, false otherwise.
+	 */
+	bool playBlock(const std::vector<float> &samples)
+	{
+		// Determine actual playback channel count.
+		unsigned int playbackChannels = m_config.multichannel ? m_config.channels : 1;
+		// In mix mode, samples are mono (1 channel), otherwise they are interleaved.
+		size_t frames = samples.size() / playbackChannels;
+		int err = 0;
+		switch (m_config.format) {
+		case SND_PCM_FORMAT_FLOAT_LE: {
+			err = snd_pcm_writei(m_handle, samples.data(), frames);
+			break;
+		}
+		case SND_PCM_FORMAT_S16_LE: {
+			std::vector<int16_t> buf(frames * playbackChannels);
+			for (size_t i = 0; i < frames; i++) {
+				for (unsigned int ch = 0; ch < playbackChannels; ch++) {
+					// For multichannel mode, use interleaved samples;
+					// in mix mode, use a single sample per frame.
+					float s = m_config.multichannel ? samples[i * m_config.channels + ch] : samples[i];
+					if (s > 1.0f)
+						s = 1.0f;
+					else if (s < -1.0f)
+						s = -1.0f;
+					buf[i * playbackChannels + ch] = static_cast<int16_t>(s * 32767);
+				}
+			}
+			err = snd_pcm_writei(m_handle, buf.data(), frames);
+			break;
+		}
+		case SND_PCM_FORMAT_S32_LE: {
+			std::vector<int32_t> buf(frames * playbackChannels);
+			for (size_t i = 0; i < frames; i++) {
+				for (unsigned int ch = 0; ch < playbackChannels; ch++) {
+					float s = m_config.multichannel ? samples[i * m_config.channels + ch] : samples[i];
+					if (s > 1.0f)
+						s = 1.0f;
+					else if (s < -1.0f)
+						s = -1.0f;
+					buf[i * playbackChannels + ch] = static_cast<int32_t>(s * 2147483647);
+				}
+			}
+			err = snd_pcm_writei(m_handle, buf.data(), frames);
+			break;
+		}
+		default: {
+			DBG_ERROR("Unsupported playback format");
+			return false;
+		}
+		}
+
+		if (err == -EPIPE) {
+			DBG_WARN("Underrun occurred on output device, recovering...");
+
+			err = snd_pcm_recover(m_handle, err, 0);
+			if (err < 0) {
+				DBG_ERROR("Alsa write fatally failed: " << snd_strerror(err));
+				snd_pcm_close(m_handle);
+				return false;
+			}
+			return false;
+		}
+		else if (err < 0) {
+			DBG_ERROR("Error writing to output device: " << snd_strerror(err));
+			return false;
+		}
+
+		return true;
+	}
+};
+
 int main(int argc, char *argv[])
 {
 	// Install stack trace handler
@@ -697,6 +921,17 @@ int main(int argc, char *argv[])
 	// After capture initialization, update sampleRate and channels accordingly.
 	config.sampleRate = capture->getSampleRate();
 	config.channels = capture->getChannels();
+
+	// If an output device is specified, initialize audio playback.
+	std::unique_ptr<AlsaPlayback> playback;
+	if (!config.outputDevice.empty()) {
+		playback = std::make_unique<AlsaPlayback>(config);
+		if (!playback->isInitialized()) {
+			DBG_ERROR("Failed to initialize audio output device: " << config.outputDevice);
+			return 1;
+		}
+		DBG_INFO("Audio output enabled on device: " << config.outputDevice);
+	}
 
 	// Initialize visualizer
 	DelayStatsVisualizer visualizer(config.outputFile, config.useColors);
@@ -846,8 +1081,20 @@ int main(int argc, char *argv[])
 		DBG_INFO("Dumping audio to: " << dumpFileName);
 	}
 
+	// If playback is enabled, kick it off with writing a full block of zeros.
+	if (playback) {
+		std::vector<float> zeroBlock(config.m_blockSize * procChannels, 0.0f);
+		playback->playBlock(zeroBlock);
+	}
+
 	while (g_running) {
 		std::vector<float> newSamples = capture->captureBlock();
+
+		// If playback is enabled, write the captured block to the audio output.
+		if (playback) {
+			playback->playBlock(newSamples);
+		}
+
 		if (config.multichannel) {
 			// In non-mix mode, newSamples is interleaved over config.channels.
 			unsigned int newFrames = newSamples.size() / config.channels;
