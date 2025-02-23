@@ -15,6 +15,7 @@ set(syncCheck_HEADERS
 	dsp/STFTWindowGenerator.h
 	dsp/KissFFTWrapper.h
 	dsp/KissFFTComplexWrapper.h
+	dsp/HilbertShifter.h
 	utils/Logger.h
 	utils/AudioInput.h
 	utils/AudioOutput.h
@@ -32,6 +33,7 @@ set(syncCheck_SOURCES
 	dsp/STFTWindowGenerator.cpp
 	dsp/KissFFTWrapper.cpp
 	dsp/KissFFTComplexWrapper.cpp
+	dsp/HilbertShifter.cpp
 	utils/Logger.cpp
 	kissfft/kiss_fft.c
 	kissfft/kiss_fftr.c
@@ -54,3 +56,5 @@ add_executable(nsdk_sync_generator_test test/syncGeneratorTest.cpp)
 
 # Executable for the sync generator window test
 add_executable(nsdk_sync_generator_window_test test/syncGeneratorWindowTest.cpp)
+
+add_executable(nsdk_hilbert_test test/hilbertTest.cpp)

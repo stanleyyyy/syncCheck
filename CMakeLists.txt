@@ -55,6 +55,10 @@ if(BUILDTYPE_USE_SYNC_ANALYZER)
 		nsdk_syncCheck
 	)
 
+	target_link_libraries(nsdk_hilbert_test PUBLIC
+		nsdk_syncCheck
+	)
+
 	target_include_directories(nsdk_syncCheck PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 	target_include_directories(nsdk_syncCheck PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/dsp)
 	target_include_directories(nsdk_syncCheck PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/utils)
@@ -72,6 +76,8 @@ if(BUILDTYPE_USE_SYNC_ANALYZER)
 	install(TARGETS nsdk_sync_generator_analyzer_test DESTINATION ${CMAKE_INSTALL_BINDIR})
 	install(TARGETS nsdk_sync_generator_test DESTINATION ${CMAKE_INSTALL_BINDIR})
 	install(TARGETS nsdk_sync_generator_window_test DESTINATION ${CMAKE_INSTALL_BINDIR})
+	install(TARGETS nsdk_hilbert_test DESTINATION ${CMAKE_INSTALL_BINDIR})
+
 else()
 	nsdk_package_create(
 		syncCheck
