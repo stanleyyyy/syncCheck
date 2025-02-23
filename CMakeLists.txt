@@ -79,6 +79,12 @@ if(BUILDTYPE_USE_SYNC_ANALYZER)
 	install(TARGETS nsdk_sync_generator_window_test DESTINATION ${CMAKE_INSTALL_BINDIR})
 	install(TARGETS nsdk_hilbert_test DESTINATION ${CMAKE_INSTALL_BINDIR})
 
+	if(NOT BUILDTYPE_PC)
+		add_definitions(
+			-O3
+			-ftree-vectorize
+		)
+	endif()
 else()
 	nsdk_package_create(
 		syncCheck
