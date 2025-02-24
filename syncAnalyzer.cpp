@@ -51,7 +51,7 @@ struct AppConfig
 	/**
 	 * @brief Audio period size.
 	 */
-	snd_pcm_uframes_t m_periodSize = 4096;
+	snd_pcm_uframes_t m_periodSize = 1024;
 
 	/**
 	 * @brief Number of audio periods.
@@ -144,24 +144,25 @@ void printUsage(const char *programName)
 {
 	std::cerr << "Usage: " << programName << " [options]\n"
 			  << "Options:\n"
-			  << "  -d, --device=NAME       ALSA device name (default: default)\n"
-			  << "  -r, --rate=RATE        Sample rate (default: 48000)\n"
-			  << "  -f, --format=FORMAT    Sample format (S16_LE, S32_LE, FLOAT_LE) (default: S16_LE)\n"
-			  << "  -o, --output=FILE      Output statistics to file\n"
-			  << "  -O, --output-device=NAME ALSA output device name (default: none)\n"
-			  << "  -n, --no-colors        Disable ANSI colors in output\n"
-			  << "  -c, --channels=NUM     Number of input channels (default: 1)\n"
-			  << "  -p, --period-size=NUM  Period size (default: 1024)\n"
-			  << "      --dump-correlation Enable correlation data dumping\n"
-			  << "      --block-size=NUM   FFT block size (default: " << SyncCheckConfig::DEFAULT_BLOCK_SIZE << ")\n"
-			  << "      --overlap=NUM      Overlap percent (50 or 75, default: " << SyncCheckConfig::DEFAULT_OVERLAP_PERCENT << ")\n"
-			  << "      --bands=NUM        Number of frequency bands (default: " << SyncCheckConfig::DEFAULT_NUM_BANDS << ")\n"
-			  << "      --interp=NUM       Interpolation factor (default: " << SyncCheckConfig::DEFAULT_INTERP_FACTOR << ")\n"
-			  << "      --start-freq=NUM   Start frequency in Hz (default: 16000)\n"
-			  << "      --freq-range=NUM   Frequency range in Hz (default: 8000)\n"
-			  << "      --band-sep=NUM     Band separation in Hz (default: 200)\n"
-			  << "      --refresh-rate=NUM Statistics refresh rate in seconds (default: 1.0)\n"
-			  << "      --dump              Enable audio dump to WAV files (auto-named)\n"
+			  << "  -d, --device=NAME       ALSA device name (default: " << AppConfig().m_captureDevice << ")\n"
+			  << "  -r, --rate=RATE        Sample rate (default: " << AppConfig().m_sampleRate << ")\n"
+			  << "  -f, --format=FORMAT    Sample format (S16_LE, S32_LE, FLOAT_LE) (default: " << AppConfig().m_format << ")\n"
+			  << "  -o, --output=FILE      Output statistics to file (default: " << AppConfig().m_dumpStatsFileName << ")\n"
+			  << "  -O, --output-device=NAME ALSA output device name (default: " << AppConfig().m_playbackDevice << ")\n"
+			  << "  -n, --no-colors        Disable ANSI colors in output (default: " << AppConfig().m_useColors << ")\n"
+			  << "  -c, --channels=NUM     Number of input channels (default: " << AppConfig().m_channels << ")\n"
+			  << "  -p, --period-size=NUM  Period size (default: " << AppConfig().m_periodSize << ")\n"
+			  << "      --periods=NUM      Number of periods (default: " << AppConfig().m_periods << ")\n"
+			  << "      --dump-correlation Enable correlation data dumping (default: " << AppConfig().m_dumpCorrelation << ")\n"
+			  << "      --block-size=NUM   FFT block size (default: " << AppConfig().m_blockSize << ")\n"
+			  << "      --overlap=NUM      Overlap percent (50 or 75, default: " << AppConfig().m_overlapPercent << ")\n"
+			  << "      --bands=NUM        Number of frequency bands (default: " << AppConfig().m_numBands << ")\n"
+			  << "      --interp=NUM       Interpolation factor (default: " << AppConfig().m_interpFactor << ")\n"
+			  << "      --start-freq=NUM   Start frequency in Hz (default: " << AppConfig().m_startFreq << ")\n"
+			  << "      --freq-range=NUM   Frequency range in Hz (default: " << AppConfig().m_freqRange << ")\n"
+			  << "      --band-sep=NUM     Band separation in Hz (default: " << AppConfig().m_bandSep << ")\n"
+			  << "      --refresh-rate=NUM Statistics refresh rate in seconds (default: " << AppConfig().m_statsRefreshRate << ")\n"
+			  << "      --dump              Enable audio dump to WAV files (auto-named, default: " << AppConfig().m_dumpAudio << ")\n"
 			  << "  -S, --sources=MAPPINGS   Specify input mapping. Use \"mix\" to mix all channels or provide a comma-separated list (e.g. \"0:0,1:1\" or \"0,1\").\n"
 			  << "  -h, --help            Show this help message\n";
 }
@@ -190,6 +191,7 @@ std::pair<bool, AppConfig> parseCommandLine(int argc, char *argv[])
 		{ "no-colors",		no_argument,	   0, 'n' },
 		{ "channels",		required_argument, 0, 'c' },
 		{ "period-size",	required_argument, 0, 'p' },
+		{ "periods",		required_argument, 0, 11 },
 		{ "block-size",		required_argument, 0, 1 },
 		{ "overlap",		required_argument, 0, 2 },
 		{ "bands",			required_argument, 0, 3 },
@@ -277,6 +279,9 @@ std::pair<bool, AppConfig> parseCommandLine(int argc, char *argv[])
 			break;
 		case 10:
 			config.m_dumpCorrelation = true;
+			break;
+		case 11: // periods
+			config.m_periods = std::stoi(optarg);
 			break;
 		case 'h':
 			return { false, config };
