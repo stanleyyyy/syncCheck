@@ -430,6 +430,10 @@ int main(int argc, char *argv[])
 			assign.refChannel = refChannel;
 			assign.refBand = refBand;
 			assignments.push_back(assign);
+
+			if (assignments.size() == config.m_channels) {
+				break;
+			}
 		}
 		syncChecker.setMultiChannelMode(assignments.size());
 		syncChecker.setChannelAssignments(assignments);
