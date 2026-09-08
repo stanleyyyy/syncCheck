@@ -23,6 +23,11 @@ target_link_libraries(nsdk_syncCheck PUBLIC
 	sndfile
 )
 
+target_include_directories(nsdk_syncCheck PUBLIC
+	${CMAKE_CURRENT_SOURCE_DIR}/dsp
+	${CMAKE_CURRENT_SOURCE_DIR}/utils
+)
+
 target_link_libraries(asound_module_pcm_bandmover PRIVATE
 	nsdk_syncCheck
 	asound
