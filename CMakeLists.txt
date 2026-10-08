@@ -17,7 +17,6 @@ option(SYNCCHECK_BUILD_TESTS "Build test programs" ON)
 option(SYNCCHECK_BUILD_ALSA_PLUGIN "Build the ALSA bandmover plugin (Linux only)" OFF)
 
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(SNDFILE REQUIRED IMPORTED_TARGET sndfile)
 pkg_check_modules(ALSA REQUIRED IMPORTED_TARGET alsa)
 
 set(syncCheck_PUBLIC_HEADERS
@@ -42,6 +41,7 @@ set(syncCheck_HEADERS
 	utils/AudioInput.h
 	utils/AudioOutput.h
 	utils/DelayStatsVisualizer.h
+	utils/WavFile.h
 )
 
 set(syncCheck_SOURCES
@@ -57,6 +57,8 @@ set(syncCheck_SOURCES
 	dsp/KissFFTComplexWrapper.cpp
 	dsp/HilbertShifter.cpp
 	utils/Logger.cpp
+	utils/WavFile.cpp
+	utils/MiniaudioImpl.c
 	kissfft/kiss_fft.c
 	kissfft/kiss_fftr.c
 )
@@ -73,7 +75,9 @@ target_include_directories(synccheck PUBLIC
 	${CMAKE_CURRENT_SOURCE_DIR}/utils
 	${CMAKE_CURRENT_SOURCE_DIR}/kissfft
 )
-target_link_libraries(synccheck PUBLIC PkgConfig::SNDFILE)
+target_include_directories(synccheck PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/miniaudio)
+find_package(Threads REQUIRED)
+target_link_libraries(synccheck PUBLIC Threads::Threads ${CMAKE_DL_LIBS})
 if(NOT WIN32)
 	target_link_libraries(synccheck PUBLIC m)
 endif()

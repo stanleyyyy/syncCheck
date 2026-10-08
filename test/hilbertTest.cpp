@@ -7,7 +7,7 @@
 #include <getopt.h>
 #include "Logger.h"
 #include "HilbertShifter.h"
-#include <sndfile.h>
+#include "WavFile.h"
 
 using namespace std;
 
@@ -118,47 +118,40 @@ std::pair<bool, AppConfig> parseCommandLine(int argc, char *argv[])
 }
 
 /**
- * @brief Load WAV file using libsndfile.
+ * @brief Load WAV file.
  * If the file has multiple channels, this function converts it to mono by taking the first channel.
  */
 bool loadWav(const string &filename, int &sampleRate, vector<float> &data)
 {
-	SF_INFO sfInfo;
-	sfInfo.format = 0;
-	SNDFILE *infile = sf_open(filename.c_str(), SFM_READ, &sfInfo);
-	if (!infile) {
+	WavReader infile;
+	if (!infile.open(filename)) {
 		DBG_ERROR("Error opening file: " << filename);
 		return false;
 	}
-	sampleRate = sfInfo.samplerate;
+	sampleRate = infile.getSampleRate();
+	const unsigned int channels = infile.getChannels();
 	// Read all channels
-	vector<float> temp(sfInfo.frames * sfInfo.channels);
-	sf_read_float(infile, temp.data(), temp.size());
-	sf_close(infile);
+	vector<float> temp(infile.getLengthInFrames() * channels);
+	const size_t frames = infile.readFrames(temp.data(), infile.getLengthInFrames());
 	// Convert to mono by taking the first channel.
-	data.resize(sfInfo.frames);
-	for (int i = 0; i < sfInfo.frames; i++) {
-		data[i] = temp[i * sfInfo.channels] / 4;
+	data.resize(frames);
+	for (size_t i = 0; i < frames; i++) {
+		data[i] = temp[i * channels] / 4;
 	}
 	return true;
 }
 
 /**
- * @brief Save WAV file using libsndfile.
+ * @brief Save WAV file.
  */
 bool saveWav(const string &filename, int sampleRate, const vector<float> &data, int channels)
 {
-	SF_INFO sfInfo;
-	sfInfo.channels = channels;
-	sfInfo.samplerate = sampleRate;
-	sfInfo.format = SF_FORMAT_WAV | SF_FORMAT_PCM_16;
-	SNDFILE *outfile = sf_open(filename.c_str(), SFM_WRITE, &sfInfo);
-	if (!outfile) {
+	WavWriter outfile;
+	if (!outfile.open(filename, channels, sampleRate)) {
 		DBG_ERROR("Error creating file: " << filename);
 		return false;
 	}
-	sf_write_float(outfile, data.data(), data.size());
-	sf_close(outfile);
+	outfile.writeFrames(data.data(), data.size() / channels);
 	return true;
 }
 

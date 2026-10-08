@@ -1,7 +1,6 @@
 #include "TestSignalGenerator.h"
 #include "SyncCheck.h"
 #include "Logger.h"
-#include <sndfile.h>
 #include <iomanip>
 
 TestSignalGenerator::TestSignalGenerator(const SyncCheckConfig &config)
@@ -10,7 +9,6 @@ TestSignalGenerator::TestSignalGenerator(const SyncCheckConfig &config)
 	, m_currentSample(0)
 	, m_isInitialized(false)
 	, m_wavDumpEnabled(false)
-	, m_referenceFile(nullptr)
 	, m_processingBufferFilled(0)
 	, m_processingBuffer(config.getBlockSize())
 {
@@ -39,16 +37,8 @@ TestSignalGenerator::~TestSignalGenerator()
 
 void TestSignalGenerator::closeWavFiles()
 {
-	for (SNDFILE *file : m_wavFiles) {
-		if (file) {
-			sf_close(file);
-		}
-	}
 	m_wavFiles.clear();
-	if (m_referenceFile) {
-		sf_close(m_referenceFile);
-		m_referenceFile = nullptr;
-	}
+	m_referenceFile.reset();
 	m_wavDumpEnabled = false;
 }
 
@@ -69,20 +59,15 @@ bool TestSignalGenerator::enableWavDump(bool enable, const std::string &prefix)
 	closeWavFiles();
 
 	// Open new files for each band
-	SF_INFO sf_info;
-	sf_info.samplerate = m_config.getSampleRate();
-	sf_info.channels = 1;
-	sf_info.format = SF_FORMAT_WAV | SF_FORMAT_FLOAT;
-	sf_info.sections = 1;
-	sf_info.seekable = 1;
+	const unsigned int sampleRate = m_config.getSampleRate();
 
 	m_wavFiles.resize(m_config.getNumBands() + 1); // +1 for mixed signal
 	bool success = true;
 
 	for (std::size_t band = 0; band < m_config.getNumBands(); band++) {
 		std::string filename = prefix + "_band" + std::to_string(band) + ".wav";
-		m_wavFiles[band] = sf_open(filename.c_str(), SFM_WRITE, &sf_info);
-		if (!m_wavFiles[band]) {
+		m_wavFiles[band] = std::make_unique<WavWriter>();
+		if (!m_wavFiles[band]->open(filename, 1, sampleRate)) {
 			success = false;
 			break;
 		}
@@ -91,8 +76,8 @@ bool TestSignalGenerator::enableWavDump(bool enable, const std::string &prefix)
 	// Open mixed signal file
 	if (success) {
 		std::string filename = prefix + "_mixed.wav";
-		m_wavFiles[m_config.getNumBands()] = sf_open(filename.c_str(), SFM_WRITE, &sf_info);
-		if (!m_wavFiles[m_config.getNumBands()]) {
+		m_wavFiles[m_config.getNumBands()] = std::make_unique<WavWriter>();
+		if (!m_wavFiles[m_config.getNumBands()]->open(filename, 1, sampleRate)) {
 			success = false;
 		}
 	}
@@ -100,8 +85,8 @@ bool TestSignalGenerator::enableWavDump(bool enable, const std::string &prefix)
 	// Open reference signal file
 	if (success) {
 		std::string filename = prefix + "_reference.wav";
-		m_referenceFile = sf_open(filename.c_str(), SFM_WRITE, &sf_info);
-		if (!m_referenceFile) {
+		m_referenceFile = std::make_unique<WavWriter>();
+		if (!m_referenceFile->open(filename, 1, sampleRate)) {
 			success = false;
 		}
 	}
@@ -211,7 +196,7 @@ void TestSignalGenerator::renderAudioBlock(std::vector<float> &output)
 
 			// Optionally, write the reference signal to WAV.
 			if (m_wavDumpEnabled && m_referenceFile) {
-				sf_writef_float(m_referenceFile, referenceData.data(), m_config.getHopSize());
+				m_referenceFile->writeFrames(referenceData.data(), m_config.getHopSize());
 			}
 
 			// Shift the existing buffers left by hopSize.
@@ -240,7 +225,7 @@ void TestSignalGenerator::renderAudioBlock(std::vector<float> &output)
 			for (std::size_t band = 0; band < m_config.getNumBands(); band++) {
 				m_delayLines[band]->processBlock(m_bandOutputs[band], m_bandOutputs[band], m_config.getHopSize(), m_delayFrames[band]);
 				if (m_wavDumpEnabled && m_wavFiles[band]) {
-					sf_writef_float(m_wavFiles[band], m_bandOutputs[band].data(), m_config.getHopSize());
+					m_wavFiles[band]->writeFrames(m_bandOutputs[band].data(), m_config.getHopSize());
 				}
 			}
 
@@ -258,7 +243,7 @@ void TestSignalGenerator::renderAudioBlock(std::vector<float> &output)
 
 			// Optionally, write the mixed hop to WAV.
 			if (m_wavDumpEnabled && m_wavFiles[m_config.getNumBands()]) {
-				sf_writef_float(m_wavFiles[m_config.getNumBands()], &m_processingBuffer[0], m_config.getHopSize());
+				m_wavFiles[m_config.getNumBands()]->writeFrames(&m_processingBuffer[0], m_config.getHopSize());
 			}
 		}
 	}

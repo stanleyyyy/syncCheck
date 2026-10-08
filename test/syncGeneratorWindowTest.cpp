@@ -1,5 +1,5 @@
 #include "STFTWindowGenerator.h"
-#include "sndfile.h"
+#include "WavFile.h"
 #include "Logger.h"
 #include <cmath>
 
@@ -63,15 +63,9 @@ void testOverlapCase(int overlapPercent, const char* outputFilename)
 	std::vector<float> olaOutput = testWindowedOLA(signal, windowGen);
 
 	// Save reconstructed signal to WAV file
-	SF_INFO sfinfo;
-	sfinfo.samplerate = sampleRate;
-	sfinfo.channels = 1;
-	sfinfo.format = SF_FORMAT_WAV | SF_FORMAT_FLOAT;
-
-	SNDFILE* outfile = sf_open(outputFilename, SFM_WRITE, &sfinfo);
-	if (outfile) {
-		sf_writef_float(outfile, olaOutput.data(), olaOutput.size());
-		sf_close(outfile);
+	WavWriter outfile;
+	if (outfile.open(outputFilename, 1, sampleRate)) {
+		outfile.writeFrames(olaOutput.data(), olaOutput.size());
 	} else {
 		DBG_ERROR("Failed to open output WAV file: " << outputFilename);
 	}

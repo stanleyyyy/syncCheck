@@ -2,7 +2,7 @@
 
 #include "SyncCheckConfig.h"
 #include "Logger.h"
-#include <sndfile.h>
+#include "WavFile.h"
 #include <vector>
 #include <cstring>
 #include <string>
@@ -26,8 +26,7 @@ private:
 	unsigned int m_periodSize;
 	unsigned int m_channels;
 	unsigned int m_sampleRate;
-	SNDFILE *m_file;
-	SF_INFO m_sfInfo;
+	WavReader m_file;
 	bool m_initialized;
 
 public:
@@ -38,7 +37,6 @@ public:
 	 */
 	FileCapture(const std::string &captureDevice, unsigned int periodSize)
 		: m_periodSize(periodSize)
-		, m_file(nullptr)
 		, m_initialized(false)
 	{
 		// Remove "file://" prefix if present.
@@ -47,30 +45,19 @@ public:
 		if (m_filePath.find(prefix) == 0)
 			m_filePath = m_filePath.substr(prefix.size());
 
-		memset(&m_sfInfo, 0, sizeof(m_sfInfo));
-		m_file = sf_open(m_filePath.c_str(), SFM_READ, &m_sfInfo);
-
-		if (!m_file) {
-			DBG_ERROR("Cannot open audio file: " << m_filePath << " (" << sf_strerror(nullptr) << ")");
+		if (!m_file.open(m_filePath)) {
+			DBG_ERROR("Cannot open audio file: " << m_filePath);
 			return;
 		}
 
 		// Override file properties.
-		m_channels = m_sfInfo.channels;
-		m_sampleRate = m_sfInfo.samplerate;
+		m_channels = m_file.getChannels();
+		m_sampleRate = m_file.getSampleRate();
 		m_initialized = true;
 
 		DBG_INFO("Opened audio file: " << m_filePath);
 		DBG_INFO("Sample rate: " << m_sampleRate << " Hz");
 		DBG_INFO("Channels: " << m_channels);
-		DBG_INFO("Format: 0x" << std::hex << m_sfInfo.format << std::dec);
-	}
-
-	~FileCapture()
-	{
-		if (m_file) {
-			sf_close(m_file);
-		}
 	}
 
 	bool isInitialized() const override { return m_initialized; }
@@ -86,7 +73,7 @@ public:
 		}
 
 
-		sf_count_t framesRead = sf_readf_float(m_file, output.data(), m_periodSize);
+		std::size_t framesRead = m_file.readFrames(output.data(), m_periodSize);
 		if (framesRead == 0) {
 			// End of file. return empty buffer.
 			return std::vector<float>();

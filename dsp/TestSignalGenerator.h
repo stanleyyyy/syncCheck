@@ -6,7 +6,8 @@
 #include "SyncSignalGenerator.h"
 #include <vector>
 #include <random>
-#include <sndfile.h>
+#include <memory>
+#include "WavFile.h"
 
 class TestSignalGenerator
 {
@@ -101,8 +102,8 @@ private:
 	bool m_isInitialized;
 	bool m_wavDumpEnabled;
 
-	SNDFILE *m_referenceFile;
-	std::vector<SNDFILE*> m_wavFiles;
+	std::unique_ptr<WavWriter> m_referenceFile;
+	std::vector<std::unique_ptr<WavWriter>> m_wavFiles;
 
 	// Buffers to maintain history between calls
 	std::vector<float> m_backgroundBuffer;

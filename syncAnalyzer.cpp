@@ -6,7 +6,6 @@
 #include <iomanip>
 #include <chrono>
 #include <set>
-#include <sndfile.h>
 
 #include "SyncCheck.h"
 #include "TestSignalGenerator.h"
@@ -445,8 +444,7 @@ int main(int argc, char *argv[])
 	float totalTime = 0.0f;
 
 	// Initialize WAV dump file if requested
-	SNDFILE* dumpFile = nullptr;
-	SF_INFO sfInfo = {};
+	WavWriter dumpFile;
 	if (config.m_dumpAudio) {
 		// Create filename with configuration parameters
 		std::stringstream ss;
@@ -457,13 +455,8 @@ int main(int argc, char *argv[])
 		   << config.m_numBands << "bands.wav";
 		std::string dumpFileName = ss.str();
 
-		sfInfo.samplerate = config.m_sampleRate;
-		sfInfo.channels = config.m_channels;
-		sfInfo.format = SF_FORMAT_WAV | SF_FORMAT_FLOAT;
-
-		dumpFile = sf_open(dumpFileName.c_str(), SFM_WRITE, &sfInfo);
-		if (!dumpFile) {
-			DBG_ERROR("Failed to open dump file: " << dumpFileName << " (" << sf_strerror(nullptr) << ")");
+		if (!dumpFile.open(dumpFileName, config.m_channels, config.m_sampleRate)) {
+			DBG_ERROR("Failed to open dump file: " << dumpFileName);
 			return 1;
 		}
 		DBG_INFO("Dumping audio to: " << dumpFileName);
@@ -489,8 +482,8 @@ int main(int argc, char *argv[])
 		}
 
 		// If dumping is enabled, write the (raw) new samples.
-		if (dumpFile) {
-			sf_writef_float(dumpFile, inputBuffer.data(), inputBuffer.size() / config.m_channels);
+		if (dumpFile.isOpen()) {
+			dumpFile.writeFrames(inputBuffer.data(), inputBuffer.size() / config.m_channels);
 		}
 
 		// How many frames have we got?
@@ -533,11 +526,6 @@ int main(int argc, char *argv[])
 			visualizer.visualizeDelays(estimates, totalTime);
 			statsUpdateTime = 0.0f;
 		}
-	}
-
-	// Cleanup
-	if (dumpFile) {
-		sf_close(dumpFile);
 	}
 
 	DBG_INFO("Capture stopped.");
