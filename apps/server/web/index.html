@@ -8,8 +8,13 @@
 	<link rel="stylesheet" href="vendor/uPlot.min.css">
 	<link rel="stylesheet" href="css/app.css">
 </head>
-<body>
+<body class="loading">
 	<header class="topbar">
+		<button class="btn ghost icon phone-only" id="openSidebarPhone" title="Sessions" aria-label="Sessions">
+			<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true">
+				<rect x="3" y="4.5" width="18" height="15" rx="2.5"/><path d="M9 4.5v15"/>
+			</svg>
+		</button>
 		<div class="brand">Sync Analyzer</div>
 		<div class="source" id="source"></div>
 		<div class="spacer"></div>
@@ -18,20 +23,31 @@
 		<span class="disk hidden" id="disk" title="Recording: file size, average write speed, free space of the data directory"></span>
 		<div class="actions">
 			<button class="btn primary" id="startStop">Start</button>
-			<button class="btn ghost" id="openSignal" title="Create a test signal">Test signal</button>
-			<div class="menu">
+			<div class="menu phone-only">
+				<button class="btn ghost icon" id="phoneMenuButton" aria-haspopup="true" aria-label="More">⋯</button>
+				<div class="menu-list hidden" id="phoneMenu">
+					<button data-click="openSignal">Test signal</button>
+					<button data-click="exportCsv">Export measurements (CSV)</button>
+					<button data-click="exportAudio">Export audio</button>
+					<button data-click="openSettings">Settings</button>
+					<button data-click="themeToggle">Light / dark theme</button>
+				</div>
+			</div>
+			<button class="btn ghost desktop-only" id="openSignal" title="Create a test signal">Test signal</button>
+			<div class="menu desktop-only">
 				<button class="btn ghost" id="exportButton" aria-haspopup="true">Export</button>
 				<div class="menu-list hidden" id="exportMenu">
 					<a href="api/measurements.csv" id="exportCsv">Measurements (CSV)</a>
 					<a href="api/recording.wav" id="exportAudio">Session audio (WAV)</a>
 				</div>
 			</div>
-			<button class="btn ghost" id="openSettings">Settings</button>
-			<button class="btn ghost" id="themeToggle" title="Toggle light/dark theme" aria-label="Toggle theme">◐</button>
+			<button class="btn ghost desktop-only" id="openSettings">Settings</button>
+			<button class="btn ghost desktop-only" id="themeToggle" title="Toggle light/dark theme" aria-label="Toggle theme">◐</button>
 		</div>
 	</header>
 
-	<div class="app-body" id="appBody">
+	<div class="app-body collapsed" id="appBody">
+	<div class="sidebar-scrim" id="sidebarScrim"></div>
 	<aside class="sidebar" id="sidebar" aria-label="Sessions">
 		<div class="sidebar-head">
 			<button class="btn ghost icon" id="toggleSidebar" title="Collapse the session list" aria-label="Collapse or expand the session list">

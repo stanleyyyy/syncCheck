@@ -333,6 +333,8 @@ details.advanced summary { cursor: pointer; font-weight: 600; font-size: 13px; }
 
 /* Layout with the session sidebar; it collapses to a narrow rail */
 html { scrollbar-gutter: stable; }
+/* No sidebar animation while the page loads; it starts collapsed and is opened by the script on wide screens. */
+body.loading .sidebar, body.loading .sidebar-scrim, body.loading .sidebar > * { transition: none !important; }
 .btn.icon { width: 32px; padding: 0; justify-content: center; flex: none; }
 .app-body { display: grid; grid-template-columns: auto minmax(0, 1fr); }
 /* Rows stay at their content height; the sidebar makes this area at least one screen tall. */
@@ -360,7 +362,45 @@ main { container-type: inline-size; min-width: 0; width: 100%; box-sizing: borde
 .sidebar input[type="search"] { width: 100%; height: 30px; padding: 0 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-raised); flex: none; }
 .session-list { flex: 1; overflow-y: auto; margin: 0 -12px 0 -8px; }
 .sidebar-foot { font-size: 12px; padding: 4px 4px 0; border-top: 1px solid var(--border); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-@media (max-width: 760px) { .source, #elapsed { display: none; } }
+.phone-only, .sidebar-scrim { display: none; }
+.chart .u-over { touch-action: pan-y; }
+
+/* Phones: the session list slides in over the page, top bar actions move into a menu */
+@media (max-width: 760px) {
+	.phone-only { display: inline-flex; }
+	.desktop-only { display: none !important; }
+	.source, #elapsed, .disk { display: none; }
+	.topbar { gap: 8px; padding: 8px 10px; }
+	.app-body, .app-body.collapsed { grid-template-columns: minmax(0, 1fr); }
+	.sidebar {
+		position: fixed;
+		left: 0;
+		top: 0;
+		bottom: 0;
+		height: auto;
+		z-index: 30;
+		width: min(320px, 88vw);
+		box-shadow: var(--shadow);
+		transition: transform 0.2s ease;
+	}
+	.collapsed .sidebar { width: min(320px, 88vw); transform: translateX(-105%); box-shadow: none; }
+	.collapsed .sidebar > *:not(.sidebar-head) { opacity: 1; }
+	.collapsed .sidebar-head > *:not(#toggleSidebar) { display: initial; }
+	.sidebar-scrim { display: block; position: fixed; inset: 0; z-index: 29; background: rgba(0, 0, 0, 0.3); transition: opacity 0.2s ease; }
+	.collapsed .sidebar-scrim { opacity: 0; pointer-events: none; }
+	main { padding: 8px; gap: 8px; }
+	.panel { padding: 10px; }
+	.pairs { min-height: 0; }
+	.card { width: 100%; flex: 1 1 100%; gap: 10px; padding: 0 10px; }
+	.card .meta { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; }
+	.card .value { font-size: 20px; min-width: 0; }
+	.card .meta div:last-child { display: none; }
+	.panel-head, .metric-head, .subhead { flex-wrap: wrap; }
+	#timelinePanel .hint { display: none; }
+	.drawer { width: 100vw; }
+	.field { grid-template-columns: 1fr; gap: 4px; }
+	.field .help { grid-column: 1; }
+}
 
 /* Session list: fixed item height, actions in a menu */
 .session-list { scrollbar-width: thin; scrollbar-color: transparent transparent; }

@@ -521,6 +521,9 @@ int main(int argc, char *argv[])
 
 	const std::string url = "http://" + std::string(host == "0.0.0.0" ? "127.0.0.1" : host) + ":" + std::to_string(port) + "/";
 	DBG_INFO("Sync analyzer running at " << url << " (data in " << dataDir << "), press Ctrl+C to quit");
+	if (host == "127.0.0.1" || host == "localhost") {
+		DBG_INFO("Only reachable from this machine; use --host 0.0.0.0 to allow access from the network");
+	}
 	if (!noBrowser && haveDisplay()) {
 		openBrowser(url);
 	}

@@ -1,13 +1,15 @@
 // Session timeline: delay chart, one metric chart and an overview navigator, all on the same time axis.
 import { chartColors, seriesColor } from './theme.js';
 import { formatTime, formatMs, el } from './format.js';
+import { bindGestures } from './gestures.js';
+import { setChartSize, viewportHeight } from './layout.js';
 
 const FONT = '12px system-ui, -apple-system, "Segoe UI", sans-serif';
 const HEIGHT = { delay: 250, metric: 130, overview: 46 };
 
 // The delay chart takes the height the window has left, so the page fits on one screen.
 function fitHeights() {
-	HEIGHT.delay = Math.max(200, Math.min(520, window.innerHeight - 510));
+	HEIGHT.delay = Math.max(200, Math.min(520, viewportHeight() - 510));
 }
 
 const METRICS = {
@@ -315,60 +317,45 @@ export class Timeline {
 		}
 	}
 
-	// Drag moves the view, a click (without moving) selects the moment under the mouse.
+	// Drag moves the view, a tap selects the moment under the pointer, pinch zooms.
 	bindInteraction(u) {
-		u.over.addEventListener('mousedown', (e) => {
-			if (e.button !== 0) return;
-			const start = { x: e.clientX, range: this.currentRange(), moved: false };
-			const pxToTime = (start.range.max - start.range.min) / Math.max(u.over.clientWidth, 1);
-			const move = (m) => {
-				const dx = m.clientX - start.x;
-				if (!start.moved && Math.abs(dx) < 4) return;
-				if (!start.moved) this.freezeY();
-				start.moved = true;
-				u.over.classList.add('dragging');
-				this.setXRange(start.range.min - dx * pxToTime, start.range.max - dx * pxToTime);
-			};
-			const up = () => {
-				window.removeEventListener('mousemove', move);
-				window.removeEventListener('mouseup', up);
-				u.over.classList.remove('dragging');
-				if (start.moved) {
-					this.unfreezeY();
-				} else if (u.cursor.idx !== null && u.cursor.idx !== undefined) {
-					this.onSelect(u.data[0][u.cursor.idx]);
-				}
-			};
-			window.addEventListener('mousemove', move);
-			window.addEventListener('mouseup', up);
-			e.preventDefault();
+		let start = null;
+		const timeAt = (clientX) => u.posToVal(clientX - u.over.getBoundingClientRect().left, 'x');
+		bindGestures(u.over, {
+			onStart: () => { start = this.currentRange(); },
+			onDrag: (dx) => {
+				this.freezeY();
+				const shift = dx * (start.max - start.min) / Math.max(u.over.clientWidth, 1);
+				this.setXRange(start.min - shift, start.max - shift);
+			},
+			onEnd: (moved) => { if (moved) this.unfreezeY(); },
+			onTap: (e) => {
+				const idx = u.posToIdx(e.clientX - u.over.getBoundingClientRect().left);
+				if (idx !== null && idx !== undefined && u.data[0].length) this.onSelect(u.data[0][Math.max(0, Math.min(idx, u.data[0].length - 1))]);
+			},
+			onPinchStart: () => { start = this.currentRange(); this.freezeY(); },
+			onPinch: (scale, clientX) => {
+				const at = timeAt(clientX);
+				const width = (start.max - start.min) / scale;
+				const ratio = (at - start.min) / (start.max - start.min);
+				this.setXRange(at - width * ratio, at + width * (1 - ratio));
+			},
 		});
 		u.over.addEventListener('dblclick', () => this.showAll());
 		u.over.addEventListener('wheel', (e) => this.onWheel(u, e), { passive: false });
 	}
 
-	// Overview: press or drag to move the view to the mouse, wheel moves the view.
+	// Overview: press or drag to move the view to the pointer.
 	bindOverview(u) {
 		const center = (clientX) => {
 			const { min, max } = this.currentRange();
 			const time = u.posToVal(clientX - u.over.getBoundingClientRect().left, 'x');
 			this.setXRange(time - (max - min) / 2, time + (max - min) / 2);
 		};
-		u.over.addEventListener('mousedown', (e) => {
-			if (e.button !== 0) return;
-			this.freezeY();
-			center(e.clientX);
-			u.over.classList.add('dragging');
-			const move = (m) => center(m.clientX);
-			const up = () => {
-				window.removeEventListener('mousemove', move);
-				window.removeEventListener('mouseup', up);
-				u.over.classList.remove('dragging');
-				this.unfreezeY();
-			};
-			window.addEventListener('mousemove', move);
-			window.addEventListener('mouseup', up);
-			e.preventDefault();
+		bindGestures(u.over, {
+			onStart: (e) => { this.freezeY(); center(e.clientX); },
+			onDrag: (dx, e) => center(e.clientX),
+			onEnd: () => this.unfreezeY(),
 		});
 		u.over.addEventListener('dblclick', () => this.showAll());
 		u.over.addEventListener('wheel', (e) => this.onWheel(u, e), { passive: false });
@@ -433,8 +420,8 @@ export class Timeline {
 		const width = this.delayEl.clientWidth;
 		if (!width) return;
 		this.reserveHeights();
-		this.delay?.setSize({ width, height: HEIGHT.delay });
-		this.metricChart?.setSize({ width, height: HEIGHT.metric });
-		this.overview?.setSize({ width, height: HEIGHT.overview });
+		setChartSize(this.delay, width, HEIGHT.delay);
+		setChartSize(this.metricChart, width, HEIGHT.metric);
+		setChartSize(this.overview, width, HEIGHT.overview);
 	}
 }

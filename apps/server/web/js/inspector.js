@@ -2,6 +2,8 @@
 // Charts zoom with the mouse wheel and move by dragging; data for the new view is fetched when the gesture ends.
 import { chartColors, seriesColor } from './theme.js';
 import { formatMs, el } from './format.js';
+import { bindGestures } from './gestures.js';
+import { setChartSize, viewportHeight } from './layout.js';
 
 const FONT = '12px system-ui, -apple-system, "Segoe UI", sans-serif';
 const HEIGHT = { value: 190 };
@@ -12,7 +14,7 @@ const DEFAULT_WAVE = { min: -5, max: 0 };
 
 // Both charts share the height the window has left.
 function fitHeight() {
-	HEIGHT.value = Math.max(150, Math.min(340, (window.innerHeight - 460) / 2));
+	HEIGHT.value = Math.max(150, Math.min(340, (viewportHeight() - 460) / 2));
 }
 
 // Tick labels with as many decimals as the tick spacing needs.
@@ -28,26 +30,6 @@ function axes(colors, xLabel, yLabel) {
 		{ ...common, label: xLabel, labelSize: 16, size: 36 },
 		{ ...common, label: yLabel, labelSize: 16, size: 58 },
 	];
-}
-
-// Run move(dx) while the mouse is dragged, end() when it is released.
-function onDrag(element, start, move, end) {
-	element.addEventListener('mousedown', (e) => {
-		if (e.button !== 0) return;
-		const x0 = e.clientX;
-		start(e);
-		element.classList.add('dragging');
-		const onMove = (m) => move(m.clientX - x0, m);
-		const onUp = () => {
-			window.removeEventListener('mousemove', onMove);
-			window.removeEventListener('mouseup', onUp);
-			element.classList.remove('dragging');
-			end();
-		};
-		window.addEventListener('mousemove', onMove);
-		window.addEventListener('mouseup', onUp);
-		e.preventDefault();
-	});
 }
 
 export class Inspector {
@@ -205,17 +187,27 @@ export class Inspector {
 		this.wheelTimer = setTimeout(() => { unfreeze?.(); this.onViewChange(); }, 250);
 	}
 
-	// Dragging moves the view; data is fetched while dragging and once more when the mouse is released.
+	// Dragging moves the view and pinching zooms; data is fetched while doing so and once more at the end.
 	bindDrag(u, apply, freeze, unfreeze) {
 		let view;
-		onDrag(u.over,
-			() => { view = { min: u.scales.x.min, max: u.scales.x.max }; freeze?.(); },
-			(dx) => {
+		const capture = () => { view = { min: u.scales.x.min, max: u.scales.x.max }; freeze?.(); };
+		bindGestures(u.over, {
+			onStart: capture,
+			onDrag: (dx) => {
 				const shift = -dx * (view.max - view.min) / Math.max(u.over.clientWidth, 1);
 				apply({ min: view.min + shift, max: view.max + shift }, false);
 				this.fetchWhileDragging();
 			},
-			() => { unfreeze?.(); this.onViewChange(); });
+			onEnd: () => { unfreeze?.(); this.onViewChange(); },
+			onPinchStart: capture,
+			onPinch: (scale, clientX) => {
+				const at = view.min + (view.max - view.min) * (clientX - u.over.getBoundingClientRect().left) / Math.max(u.over.clientWidth, 1);
+				const width = (view.max - view.min) / scale;
+				const ratio = (at - view.min) / (view.max - view.min);
+				apply({ min: at - width * ratio, max: at + width * (1 - ratio) }, false);
+				this.fetchWhileDragging();
+			},
+		});
 	}
 
 	// --- correlation
@@ -382,8 +374,11 @@ export class Inspector {
 			hooks: {
 				draw: [(u) => this.drawWindow(u, colors)],
 				ready: [(u) => {
-					onDrag(u.over, (e) => { moveTo(e.clientX); this.fetchWhileDragging(); },
-						(dx, m) => { moveTo(m.clientX); this.fetchWhileDragging(); }, () => this.onViewChange());
+					bindGestures(u.over, {
+						onStart: (e) => { moveTo(e.clientX); this.fetchWhileDragging(); },
+						onDrag: (dx, e) => { moveTo(e.clientX); this.fetchWhileDragging(); },
+						onEnd: () => this.onViewChange(),
+					});
 					// Ctrl+wheel or a horizontal swipe moves the window.
 					u.over.addEventListener('wheel', (e) => {
 						const horizontal = Math.abs(e.deltaX) > Math.abs(e.deltaY);
@@ -429,8 +424,8 @@ export class Inspector {
 
 	resize() {
 		this.reserveHeights();
-		this.corr?.setSize({ width: this.corrEl.clientWidth, height: HEIGHT.value });
-		this.wave?.setSize({ width: this.waveEl.clientWidth, height: HEIGHT.value });
-		this.overview?.setSize({ width: this.overviewEl.clientWidth, height: OVERVIEW_HEIGHT });
+		setChartSize(this.corr, this.corrEl.clientWidth, HEIGHT.value);
+		setChartSize(this.wave, this.waveEl.clientWidth, HEIGHT.value);
+		setChartSize(this.overview, this.overviewEl.clientWidth, OVERVIEW_HEIGHT);
 	}
 }

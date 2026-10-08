@@ -38,20 +38,36 @@ const settingsDrawer = new SettingsDrawer({ drawer: $('settingsDrawer'), scrim: 
 	onSaved: (settings) => { app.state.settings = settings; renderHeader(); } });
 const sessions = new SessionsPanel({ list: $('sessionList'), search: $('sessionSearch'), count: $('sessionCount'), footer: $('sessionsDisk'),
 	selectionBar: $('selectionBar'), selectButton: $('selectSessions'),
-	onOpened: (state) => onState(state), onError: showError });
+	onOpened: (state) => { onState(state); if (phone.matches) setSidebar(false); }, onError: showError });
 
 // The session list collapses to a narrow rail; the choice is remembered, narrow windows start collapsed.
+// On phones it slides in over the page and closes again after use.
+const phone = matchMedia('(max-width: 760px)');
 function setSidebar(show, remember = true) {
 	$('appBody').classList.toggle('collapsed', !show);
 	$('toggleSidebar').title = show ? 'Collapse the session list' : 'Show the session list';
-	if (remember) {
+	if (remember && !phone.matches) {
 		try { localStorage.setItem('sidebar', show ? '1' : '0'); } catch (e) { /* storage unavailable */ }
 	}
 }
 let sidebarStored = null;
 try { sidebarStored = localStorage.getItem('sidebar'); } catch (e) { /* storage unavailable */ }
 setSidebar(window.innerWidth >= 1100 && sidebarStored !== '0', false);
+phone.addEventListener('change', (e) => { if (e.matches) setSidebar(false, false); });
 $('toggleSidebar').addEventListener('click', () => setSidebar($('appBody').classList.contains('collapsed')));
+// Animations on from the next frame, after the initial sidebar state is in place.
+requestAnimationFrame(() => requestAnimationFrame(() => document.body.classList.remove('loading')));
+$('openSidebarPhone').addEventListener('click', () => setSidebar(true));
+$('sidebarScrim').addEventListener('click', () => setSidebar(false));
+
+// Phone menu: the top bar actions that do not fit.
+$('phoneMenuButton').addEventListener('click', (e) => { e.stopPropagation(); $('phoneMenu').classList.toggle('hidden'); });
+$('phoneMenu').addEventListener('click', (e) => {
+	const target = e.target.dataset.click;
+	$('phoneMenu').classList.add('hidden');
+	if (target && !$(target).classList.contains('disabled')) $(target).click();
+});
+document.addEventListener('click', () => $('phoneMenu').classList.add('hidden'));
 const signalDialog = new SignalDialog({ dialog: $('signalDialog'), body: $('signalBody'), download: $('downloadSignal') });
 
 function showError(message) {
