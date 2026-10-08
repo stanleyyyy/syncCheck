@@ -9,6 +9,24 @@
 #include <vector>
 
 /**
+ * @brief What the analyzer compares.
+ */
+enum class SyncAnalyzerMode
+{
+	/**
+	 * @brief Use the source mapping (m_sources): "mix" compares frequency shifted bands of a
+	 * band test signal, a channel list compares the listed channels/bands (default).
+	 */
+	Sources,
+
+	/**
+	 * @brief Compare the reference channel with the other input channels over one wide
+	 * frequency range (m_minFreq - m_maxFreq). Works with any wideband signal.
+	 */
+	Channels,
+};
+
+/**
  * @brief Settings of a sync analysis run.
  */
 struct SyncAnalyzerSettings
@@ -107,6 +125,32 @@ struct SyncAnalyzerSettings
 	 * @brief When analyzing a file, deliver its samples at the real playback speed.
 	 */
 	bool m_realtimeFile = false;
+
+	/**
+	 * @brief Measurement mode.
+	 */
+	SyncAnalyzerMode m_mode = SyncAnalyzerMode::Sources;
+
+	/**
+	 * @brief Channel mode: reference channel.
+	 */
+	unsigned int m_referenceChannel = 0;
+
+	/**
+	 * @brief Channel mode: channels compared with the reference. Empty means all other channels.
+	 */
+	std::vector<unsigned int> m_measuredChannels;
+
+	/**
+	 * @brief Channel mode: analyzed frequency range in Hz.
+	 */
+	unsigned int m_minFreq = 200;
+	unsigned int m_maxFreq = 20000;
+
+	/**
+	 * @brief Record the captured audio to this 16-bit WAV file, readable while recording. Empty disables it.
+	 */
+	std::string m_recordFile;
 };
 
 /**
@@ -137,8 +181,15 @@ struct SyncAnalyzerSnapshot
 	 */
 	float m_timestamp = 0.0f;
 
+	/**
+	 * @brief Amount of analyzed audio in frames.
+	 */
+	uint64_t m_frames = 0;
+
 	unsigned int m_sampleRate = 0;
 	unsigned int m_interpFactor = 0;
+	unsigned int m_channels = 0;
+	SyncAnalyzerMode m_mode = SyncAnalyzerMode::Sources;
 
 	/**
 	 * @brief Results of all assignments, self assignments (reference compared to itself) excluded.
@@ -180,6 +231,48 @@ public:
 	 */
 	void stop() { m_stopRequested = true; }
 
+	/**
+	 * @brief Check the settings against an input and translate channel mode into a source mapping.
+	 * @param settings Requested settings.
+	 * @param channels Number of input channels.
+	 * @param sampleRate Input sample rate.
+	 * @param resolved Receives the settings run() works with.
+	 * @param error Receives a description of a problem.
+	 * @return True if the settings can be used with this input.
+	 */
+	static bool resolveSettings(const SyncAnalyzerSettings &settings, unsigned int channels, unsigned int sampleRate,
+		SyncAnalyzerSettings &resolved, std::string &error);
+
+	/**
+	 * @brief Analyze the single block of an audio file that ends at endFrame.
+	 *
+	 * Used to inspect the correlation at any time of a recording. The results are not filtered.
+	 *
+	 * @param path Audio file (may still be recorded by WavRecorder).
+	 * @param settings Analysis settings; the capture device is ignored.
+	 * @param endFrame Last frame of the analyzed block.
+	 * @param snapshot Receives the results.
+	 * @param error Receives a description of a failure.
+	 * @return True on success.
+	 */
+	static bool analyzeBlock(const std::string &path, const SyncAnalyzerSettings &settings, uint64_t endFrame,
+		SyncAnalyzerSnapshot &snapshot, std::string &error);
+
 private:
+	struct CheckerSetup
+	{
+		SyncCheckConfig m_config;
+		bool m_multichannel = false;
+		unsigned int m_procChannels = 1;
+		std::vector<FFTSyncCheck::ChannelAssignment> m_assignments;
+		std::vector<FFTSyncCheck::ChannelAssignment> m_checkerAssignments;
+	};
+
+	static bool setupChecker(const SyncAnalyzerSettings &settings, unsigned int sampleRate, unsigned int channels,
+		CheckerSetup &setup, std::string &error);
+	static void fillProcessingBuffer(const CheckerSetup &setup, const std::vector<float> &inputBuffer, unsigned int channels,
+		std::vector<float> &processingBuffer);
+	static void collectResults(const CheckerSetup &setup, const FFTSyncCheck &syncChecker, SyncAnalyzerSnapshot &snapshot);
+
 	std::atomic<bool> m_stopRequested { false };
 };

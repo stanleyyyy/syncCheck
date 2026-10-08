@@ -148,6 +148,101 @@ static void testNonIdentityMapping()
 	std::remove(file.c_str());
 }
 
+/**
+ * @brief Channel mode compares the reference with all other channels over a wide band.
+ */
+static void testChannelMode()
+{
+	const std::vector<float> delays = { 0.0f, 1.0f, -2.5f, 0.375f };
+	const std::vector<float> signal = generateNoiseTestSignal(4, 48000, 10.0f, delays);
+
+	const std::string file = "syncAnalyzerTest_channels.wav";
+	{
+		WavWriter writer;
+		check(writer.open(file, 4, 48000), "cannot write " + file);
+		writer.writeFrames(signal.data(), signal.size() / 4);
+	}
+
+	SyncAnalyzerSettings settings;
+	settings.m_captureDevice = "file://" + file;
+	settings.m_mode = SyncAnalyzerMode::Channels;
+	SyncAnalyzerSnapshot snapshot = analyze(settings);
+	check(snapshot.m_results.size() == 3, "channel mode: expected 3 results");
+	for (const auto &result : snapshot.m_results) {
+		const auto &report = result.m_report;
+		const float expected = delays[report.assignment.sigChannel];
+		DBG_INFO("channel " << report.assignment.sigChannel << ": " << report.filteredDelay << " ms (expected " << expected << " ms)");
+		check(report.assignment.refChannel == 0, "channel mode: reference");
+		check(std::fabs(report.filteredDelay - expected) < 0.02f, "channel mode delay of channel " + std::to_string(report.assignment.sigChannel));
+		check(!result.m_correlation.empty(), "channel mode: missing correlation data");
+	}
+
+	// Other reference, subset of channels
+	settings.m_referenceChannel = 3;
+	settings.m_measuredChannels = { 1 };
+	snapshot = analyze(settings);
+	check(snapshot.m_results.size() == 1 && std::fabs(snapshot.m_results[0].m_report.filteredDelay - 0.625f) < 0.02f,
+		"channel mode 3 -> 1 delay");
+
+	// Single block analysis at 5 s
+	settings.m_referenceChannel = 0;
+	settings.m_measuredChannels.clear();
+	std::string error;
+	check(SyncAnalyzer::analyzeBlock(file, settings, 5 * 48000, snapshot, error), "analyzeBlock failed: " + error);
+	check(snapshot.m_results.size() == 3, "analyzeBlock: expected 3 results");
+	for (const auto &result : snapshot.m_results) {
+		const float expected = delays[result.m_report.assignment.sigChannel];
+		check(std::fabs(result.m_report.filteredDelay - expected) < 0.02f, "analyzeBlock delay");
+	}
+
+	// A mono input cannot be measured in channel mode
+	const std::string mono = "syncAnalyzerTest_mono.wav";
+	{
+		WavWriter writer;
+		writer.open(mono, 1, 48000);
+		writer.writeFrames(signal.data(), 48000);
+	}
+	settings.m_captureDevice = "file://" + mono;
+	SyncAnalyzer analyzer;
+	check(!analyzer.run(settings, nullptr, error), "channel mode must reject a mono input");
+	std::remove(mono.c_str());
+	std::remove(file.c_str());
+}
+
+/**
+ * @brief Recordings are complete and readable; mix mode needs at least 2 bands.
+ */
+static void testRecordingAndValidation()
+{
+	const std::vector<float> signal = generateNoiseTestSignal(2, 48000, 3.0f, { 0.0f, 0.5f });
+	const std::string file = "syncAnalyzerTest_record_in.wav";
+	const std::string recording = "syncAnalyzerTest_record_out.wav";
+	{
+		WavWriter writer;
+		writer.open(file, 2, 48000);
+		writer.writeFrames(signal.data(), signal.size() / 2);
+	}
+
+	SyncAnalyzerSettings settings;
+	settings.m_captureDevice = "file://" + file;
+	settings.m_mode = SyncAnalyzerMode::Channels;
+	settings.m_recordFile = recording;
+	analyze(settings);
+
+	WavReader reader;
+	check(reader.open(recording) && reader.getChannels() == 2 && reader.getLengthInFrames() == 3 * 48000, "recording is incomplete");
+	reader.close();
+
+	SyncAnalyzerSettings resolved;
+	std::string error;
+	settings = SyncAnalyzerSettings();
+	settings.m_numBands = 1;
+	check(!SyncAnalyzer::resolveSettings(settings, 2, 48000, resolved, error), "mix mode must reject a single band");
+
+	std::remove(file.c_str());
+	std::remove(recording.c_str());
+}
+
 int main()
 {
 	Logger::getInstance().setLogLevel(LOG_WARNING);
@@ -155,6 +250,8 @@ int main()
 	testMixMode();
 	testMultichannelMode();
 	testNonIdentityMapping();
+	testChannelMode();
+	testRecordingAndValidation();
 
 	if (g_failures) {
 		DBG_ERROR(g_failures << " check(s) failed");

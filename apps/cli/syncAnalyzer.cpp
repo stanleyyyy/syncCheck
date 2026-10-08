@@ -37,7 +37,11 @@ static void listDevices()
 	for (auto direction : { AudioDevices::Direction::Capture, AudioDevices::Direction::Playback }) {
 		std::cout << (direction == AudioDevices::Direction::Capture ? "Capture" : "Playback") << " devices:\n";
 		for (const auto &device : AudioDevices::list(direction)) {
-			std::cout << "  " << (device.m_isDefault ? "* " : "  ") << device.m_name << " [" << device.m_backend << "]\n";
+			std::cout << "  " << (device.m_isDefault ? "* " : "  ") << device.m_name << " [" << device.m_backend;
+			if (device.m_maxChannels) {
+				std::cout << ", " << device.m_maxChannels << " ch";
+			}
+			std::cout << "]\n";
 		}
 	}
 }
@@ -78,7 +82,19 @@ int main(int argc, char *argv[])
 	app.add_flag("--realtime", settings.m_realtimeFile, "Analyze files at real playback speed");
 	app.add_flag("-l,--list-devices", listDevicesOnly, "List audio devices and exit");
 
+	std::string mode = "sources";
+	app.add_option("-m,--mode", mode, "sources: use --sources (mix = band test signal); "
+		"channels: compare --reference with the other input channels over --min-freq..--max-freq")
+		->check(CLI::IsMember({ "sources", "channels" }));
+	app.add_option("--reference", settings.m_referenceChannel, "Channel mode: reference channel");
+	app.add_option("--measure", settings.m_measuredChannels, "Channel mode: channels compared with the reference (default: all others)")
+		->delimiter(',');
+	app.add_option("--min-freq", settings.m_minFreq, "Channel mode: lower edge of the analyzed frequency range in Hz");
+	app.add_option("--max-freq", settings.m_maxFreq, "Channel mode: upper edge of the analyzed frequency range in Hz");
+	app.add_option("--record", settings.m_recordFile, "Record the captured audio to this WAV file");
+
 	CLI11_PARSE(app, argc, argv);
+	settings.m_mode = mode == "channels" ? SyncAnalyzerMode::Channels : SyncAnalyzerMode::Sources;
 
 	// Set desired log level
 	Logger::getInstance().setLogLevel(LOG_DEBUG);
