@@ -87,7 +87,7 @@ export class Inspector {
 
 	updateReadouts() {
 		const c = this.corrView;
-		this.corrReadout.textContent = `${formatMs(c.min, 2)} … ${formatMs(c.max, 2)} ms · scroll to zoom, double-click to fit`;
+		this.corrReadout.textContent = `${formatMs(c.min, 2)} … ${formatMs(c.max, 2)} ms · scroll to zoom, drag to move, double-click to fit`;
 		const w = this.waveView;
 		this.waveReadout.textContent = `${w.span < 10 ? w.span.toFixed(2) : w.span.toFixed(0)} ms window · double-click to reset`;
 	}
@@ -97,6 +97,29 @@ export class Inspector {
 		const ratio = (at - min) / (max - min);
 		const width = (max - min) * factor;
 		return { min: at - width * ratio, max: at + width * (1 - ratio) };
+	}
+
+	// Drag moves the view.
+	bindDrag(u, apply) {
+		u.over.addEventListener('mousedown', (e) => {
+			if (e.button !== 0) return;
+			const { min, max } = u.scales.x;
+			const startX = e.clientX;
+			const pxToValue = (max - min) / Math.max(u.over.clientWidth, 1);
+			const move = (m) => {
+				const shift = (startX - m.clientX) * pxToValue;
+				u.over.classList.add('dragging');
+				apply({ min: min + shift, max: max + shift });
+			};
+			const up = () => {
+				window.removeEventListener('mousemove', move);
+				window.removeEventListener('mouseup', up);
+				u.over.classList.remove('dragging');
+			};
+			window.addEventListener('mousemove', move);
+			window.addEventListener('mouseup', up);
+			e.preventDefault();
+		});
 	}
 
 	wheel(u, e, apply) {
@@ -153,6 +176,7 @@ export class Inspector {
 					draw: [(u) => this.drawPeaks(u)],
 					ready: [(u) => {
 						u.over.addEventListener('wheel', (e) => this.wheel(u, e, (v) => this.setCorrView(v)), { passive: false });
+						this.bindDrag(u, (v) => this.setCorrView(v));
 						u.over.addEventListener('dblclick', () => this.fitCorrelation());
 					}],
 				},
@@ -242,6 +266,7 @@ export class Inspector {
 			hooks: {
 				ready: [(u) => {
 					u.over.addEventListener('wheel', (e) => this.wheel(u, e, (v) => this.setWaveView(v)), { passive: false });
+					this.bindDrag(u, (v) => this.setWaveView(v));
 					u.over.addEventListener('dblclick', () => this.setWaveView({ min: -DEFAULT_WINDOW / 2, max: DEFAULT_WINDOW / 2 }));
 				}],
 			},

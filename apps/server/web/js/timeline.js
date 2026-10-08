@@ -19,7 +19,9 @@ const METRICS = {
 function axes(colors, yLabel, yValues) {
 	const common = { stroke: colors.muted, font: FONT, labelFont: FONT, ticks: { stroke: colors.axis, width: 1, size: 4 } };
 	return [
-		{ ...common, grid: { stroke: colors.grid, width: 1 }, space: 90, values: (u, vals) => vals.map((v) => formatTime(v)) },
+		{ ...common, grid: { stroke: colors.grid, width: 1 }, space: 90,
+			// Show fractions of a second once the ticks are less than a second apart.
+			values: (u, vals, axis, space, incr) => vals.map((v) => formatTime(v, incr < 1)) },
 		{ ...common, grid: { stroke: colors.grid, width: 1 }, label: yLabel, size: 64, labelSize: 18, values: (u, vals) => vals.map(yValues) },
 	];
 }
@@ -97,7 +99,7 @@ export class Timeline {
 		const width = this.delayEl.clientWidth || 800;
 		const sync = { key: 'timeline', setSeries: false };
 		const markers = { hooks: { draw: [(u) => this.drawMarkers(u, colors)] } };
-		const cursor = (size) => ({ sync, y: false, drag: { x: true, y: false, setScale: false }, bind: { dblclick: () => null }, points: { size } });
+		const cursor = (size) => ({ sync, y: false, drag: { x: false, y: false }, bind: { dblclick: () => null }, points: { size } });
 
 		this.delay = new uPlot({
 			width, height: HEIGHT.delay, legend: { show: false },
@@ -106,7 +108,7 @@ export class Timeline {
 			axes: axes(colors, 'Delay (ms)', (v) => formatMs(v, 2)),
 			cursor: cursor(8),
 			plugins: [tooltipPlugin((v) => formatMs(v), 'ms'), markers],
-			hooks: { ready: [(u) => this.bindInteraction(u)], setSelect: [(u) => this.onDragSelect(u)] },
+			hooks: { ready: [(u) => this.bindInteraction(u)] },
 		}, this.chartData('delay'), this.delayEl);
 
 		const metric = METRICS[this.metric];
@@ -116,7 +118,7 @@ export class Timeline {
 			axes: axes(colors, `${metric.label} (${metric.unit})`, (v) => metric.format(v)),
 			cursor: cursor(6),
 			plugins: [tooltipPlugin(metric.format, metric.unit), markers],
-			hooks: { ready: [(u) => this.bindInteraction(u)], setSelect: [(u) => this.onDragSelect(u)] },
+			hooks: { ready: [(u) => this.bindInteraction(u)] },
 		}, this.chartData(this.metric), this.metricEl);
 
 		const [overviewX, overviewY] = axes(colors, '', () => '');
@@ -127,10 +129,9 @@ export class Timeline {
 			scales: { x: { time: false, range: (u, min, max) => (min === null || max === null || min === max ? [0, 10] : [min, max]) } },
 			// The hidden y axis keeps the plot area aligned with the charts above.
 			axes: [{ ...overviewX, size: 22 }, { ...overviewY, label: '', values: (u, vals) => vals.map(() => ''), grid: { show: false }, ticks: { show: false } }],
-			cursor: { drag: { x: true, y: false, setScale: false }, bind: { dblclick: () => null }, points: { show: false }, y: false },
+			cursor: { drag: { x: false, y: false }, bind: { dblclick: () => null }, points: { show: false }, y: false },
 			hooks: {
 				draw: [(u) => this.drawWindow(u, colors), (u) => this.drawMarkers(u, colors)],
-				setSelect: [(u) => this.onDragSelect(u)],
 				ready: [(u) => this.bindOverview(u)],
 			},
 		}, this.chartData('delay'), this.overviewEl);
@@ -257,13 +258,6 @@ export class Timeline {
 		this.setXRange(min + shift, max + shift);
 	}
 
-	onDragSelect(u) {
-		if (u.select.width > 4) {
-			this.setXRange(u.posToVal(u.select.left, 'x'), u.posToVal(u.select.left + u.select.width, 'x'));
-		}
-		u.setSelect({ left: 0, width: 0, top: 0, height: 0 }, false);
-	}
-
 	// Wheel: zoom around the mouse; Shift+wheel or a horizontal swipe: move.
 	onWheel(u, e, zoomAround) {
 		e.preventDefault();
@@ -278,30 +272,55 @@ export class Timeline {
 		}
 	}
 
+	// Drag moves the view, a click (without moving) selects the moment under the mouse.
 	bindInteraction(u) {
-		let down = null;
-		u.over.addEventListener('mousedown', (e) => { down = { x: e.clientX, y: e.clientY }; });
-		u.over.addEventListener('mouseup', (e) => {
-			if (down && Math.abs(e.clientX - down.x) < 4 && Math.abs(e.clientY - down.y) < 4 && u.cursor.idx !== null) {
-				this.onSelect(u.data[0][u.cursor.idx]);
-			}
-			down = null;
+		u.over.addEventListener('mousedown', (e) => {
+			if (e.button !== 0) return;
+			const start = { x: e.clientX, range: this.currentRange(), moved: false };
+			const pxToTime = (start.range.max - start.range.min) / Math.max(u.over.clientWidth, 1);
+			const move = (m) => {
+				const dx = m.clientX - start.x;
+				if (!start.moved && Math.abs(dx) < 4) return;
+				start.moved = true;
+				u.over.classList.add('dragging');
+				this.setXRange(start.range.min - dx * pxToTime, start.range.max - dx * pxToTime);
+			};
+			const up = () => {
+				window.removeEventListener('mousemove', move);
+				window.removeEventListener('mouseup', up);
+				u.over.classList.remove('dragging');
+				if (!start.moved && u.cursor.idx !== null && u.cursor.idx !== undefined) {
+					this.onSelect(u.data[0][u.cursor.idx]);
+				}
+			};
+			window.addEventListener('mousemove', move);
+			window.addEventListener('mouseup', up);
+			e.preventDefault();
 		});
 		u.over.addEventListener('dblclick', () => this.showAll());
 		u.over.addEventListener('wheel', (e) => this.onWheel(u, e, true), { passive: false });
 	}
 
-	// Overview: drag selects a range, click centers the view, wheel moves the view.
+	// Overview: press or drag to move the view to the mouse, wheel moves the view.
 	bindOverview(u) {
-		let down = null;
-		u.over.addEventListener('mousedown', (e) => { down = e.clientX; });
-		u.over.addEventListener('mouseup', (e) => {
-			if (down !== null && Math.abs(e.clientX - down) < 4) {
-				const { min, max } = this.currentRange();
-				const center = u.posToVal(e.offsetX, 'x');
-				this.setXRange(center - (max - min) / 2, center + (max - min) / 2);
-			}
-			down = null;
+		const center = (clientX) => {
+			const { min, max } = this.currentRange();
+			const time = u.posToVal(clientX - u.over.getBoundingClientRect().left, 'x');
+			this.setXRange(time - (max - min) / 2, time + (max - min) / 2);
+		};
+		u.over.addEventListener('mousedown', (e) => {
+			if (e.button !== 0) return;
+			center(e.clientX);
+			u.over.classList.add('dragging');
+			const move = (m) => center(m.clientX);
+			const up = () => {
+				window.removeEventListener('mousemove', move);
+				window.removeEventListener('mouseup', up);
+				u.over.classList.remove('dragging');
+			};
+			window.addEventListener('mousemove', move);
+			window.addEventListener('mouseup', up);
+			e.preventDefault();
 		});
 		u.over.addEventListener('dblclick', () => this.showAll());
 		u.over.addEventListener('wheel', (e) => this.onWheel(u, e, false), { passive: false });

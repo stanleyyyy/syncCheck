@@ -222,7 +222,7 @@ h3 { font-size: 13px; font-weight: 600; margin: 0 0 6px; color: var(--ink-2); }
 @media (max-width: 1100px) { .workspace { grid-template-columns: 1fr; } }
 .metric-head { margin: 8px 0 2px; }
 .subhead { display: flex; align-items: center; gap: 10px; margin: 6px 0 2px; }
-.subhead h3 { margin: 0; }
+.subhead h3 { margin: 0; white-space: nowrap; }
 .playback { display: inline-flex; gap: 6px; align-items: center; }
 .playback select { height: 26px; width: auto; font-size: 13px; }
 .keys { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--ink-2); margin-top: 2px; }
@@ -267,7 +267,9 @@ table.values th { text-align: left; font-weight: 500; color: var(--muted); paddi
 table.values td { padding: 3px 8px; border-bottom: 1px solid var(--border); }
 table.values td.right, table.values th.right { text-align: right; }
 
-/* uPlot chrome */
+/* uPlot chrome: dragging moves the charts */
+.chart .u-over { cursor: grab; }
+.chart .u-over.dragging { cursor: grabbing; }
 .u-select { background: color-mix(in srgb, var(--accent) 15%, transparent); }
 .uplot { font-family: inherit; }
 

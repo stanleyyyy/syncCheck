@@ -55,7 +55,7 @@
 					</div>
 					<label class="toggle"><input type="checkbox" id="follow" checked> Follow live</label>
 					<div class="spacer"></div>
-					<div class="playback" id="playback">
+					<div class="playback hidden" id="playback">
 						<button class="btn small" id="playButton" title="Play from the selected moment to the end of the view (Space)">▶ Play</button>
 						<select id="listen" title="What to listen to"></select>
 					</div>
@@ -70,8 +70,8 @@
 				</div>
 				<div class="chart" id="metricChart"></div>
 				<div class="chart overview" id="overviewChart"></div>
-				<p class="hint">Scroll to zoom, Shift+scroll to move, drag to zoom into a range, double-click for everything.
-					Click a moment to inspect it · ← → step · + − zoom · Space play.</p>
+				<p class="hint">Scroll to zoom, drag to move, double-click for everything. Click a moment to inspect it ·
+					← → step · + − zoom · Space play (after the measurement).</p>
 			</section>
 
 			<section class="panel" id="inspectPanel">

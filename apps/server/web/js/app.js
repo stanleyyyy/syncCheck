@@ -29,7 +29,7 @@ const timeline = new Timeline({
 const inspector = new Inspector({
 	corrEl: $('corrChart'), waveEl: $('waveChart'), keysEl: $('waveKeys'), tableEl: $('inspectTable'), noAudioEl: $('noAudio'),
 	corrReadout: $('corrReadout'), waveReadout: $('waveReadout'),
-	onViewChange: () => scheduleInspect(150),
+	onViewChange: () => scheduleInspect(150, true),
 });
 const settingsDrawer = new SettingsDrawer({ drawer: $('settingsDrawer'), scrim: $('scrim'), body: $('settingsBody'),
 	onSaved: (settings) => { app.state.settings = settings; renderHeader(); } });
@@ -71,9 +71,9 @@ function renderHeader() {
 	const hasAudio = !!(current && current.audio);
 	$('exportAudio').classList.toggle('disabled', !hasAudio);
 	$('exportCsv').classList.toggle('disabled', !app.store.t.length);
-	$('playButton').disabled = !hasAudio;
-	$('listen').disabled = !hasAudio;
-	$('playButton').title = hasAudio ? 'Play from the selected moment to the end of the view (Space)' : 'This session has no audio; enable “Record input”';
+	// Playback is for reviewing a finished session.
+	$('playback').classList.toggle('hidden', state.running || !hasAudio);
+	if (state.running) stopPlayback();
 }
 
 // Pair cards: values of the selected moment (or the latest), quality and drift over the visible range.
@@ -193,7 +193,7 @@ function onMeasurements(batch) {
 	updateCards();
 	updateElapsed();
 	renderHeader();
-	if (app.selection === null) scheduleInspect(1000);
+	if (app.selection === null) scheduleInspect(1000, false);
 }
 
 // Inspector: the selected moment or, without a selection, the latest measurement.
@@ -206,8 +206,12 @@ function updateInspectorHeader() {
 	$('backToLive').textContent = running ? 'Back to live' : 'Show latest';
 }
 
-function scheduleInspect(delay) {
-	clearTimeout(app.inspectTimer);
+// restart: wait until requests stop coming (zooming); otherwise refresh at most once per delay (live updates).
+function scheduleInspect(delay, restart = true) {
+	if (app.inspectTimer) {
+		if (!restart) return;
+		clearTimeout(app.inspectTimer);
+	}
 	app.inspectTimer = setTimeout(() => { app.inspectTimer = null; inspect(); }, delay);
 }
 
@@ -285,7 +289,7 @@ document.addEventListener('keydown', (e) => {
 		return;
 	}
 	if (e.key === ' ') {
-		if (app.audio) stopPlayback(); else startPlayback();
+		if (app.audio) stopPlayback(); else if (!app.state.running) startPlayback();
 	} else if (e.key === '+' || e.key === '=') {
 		timeline.zoom(1 / 1.5, app.selection);
 	} else if (e.key === '-' || e.key === '_') {
