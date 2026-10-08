@@ -203,7 +203,7 @@ h3 { font-size: 13px; font-weight: 600; margin: 0 0 6px; color: var(--ink-2); }
 }
 
 /* Pair cards: one compact row per pair, they are also the legend */
-.pairs { display: flex; flex-wrap: wrap; gap: 8px; min-height: 56px; }
+.pairs { display: flex; flex-wrap: wrap; gap: 8px; min-height: 56px; min-width: 0; }
 .card {
 	display: flex;
 	align-items: center;
@@ -399,8 +399,9 @@ main { container-type: inline-size; min-width: 0; width: 100%; box-sizing: borde
 	main { padding: 8px; gap: 8px; }
 	.panel { padding: 10px; }
 	.pairs { min-height: 0; }
-	.card { width: 100%; flex: 1 1 100%; gap: 10px; padding: 0 10px; }
+	.card { width: 100%; flex: 1 1 100%; min-width: 0; gap: 10px; padding: 0 10px; }
 	.card .meta { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; }
+	.card .meta div { overflow: hidden; text-overflow: ellipsis; }
 	.card .value { font-size: 20px; min-width: 0; }
 	.card .meta div:last-child { display: none; }
 	.panel-head, .metric-head, .subhead { flex-wrap: wrap; }
