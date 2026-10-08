@@ -293,18 +293,16 @@ export class Timeline {
 		this.setXRange(min + shift, max + shift);
 	}
 
-	// Wheel: zoom around the mouse; Shift+wheel or a horizontal swipe: move.
-	onWheel(u, e, zoomAround) {
+	// Ctrl+wheel (or pinch) zooms around the mouse, a horizontal swipe moves; the plain wheel scrolls the page.
+	onWheel(u, e) {
+		const horizontal = Math.abs(e.deltaX) > Math.abs(e.deltaY);
+		if (!(e.ctrlKey || e.metaKey) && !horizontal) return;
 		e.preventDefault();
 		this.freezeYBriefly();
-		const horizontal = Math.abs(e.deltaX) > Math.abs(e.deltaY);
-		if (e.shiftKey || horizontal) {
-			const delta = horizontal ? e.deltaX : e.deltaY;
-			this.pan(delta / Math.max(u.over.clientWidth, 1));
-		} else if (zoomAround) {
-			this.zoom(Math.exp(e.deltaY * 0.002), u.posToVal(e.offsetX, 'x'));
+		if (horizontal) {
+			this.pan(e.deltaX / Math.max(u.over.clientWidth, 1));
 		} else {
-			this.pan(e.deltaY / Math.max(u.over.clientWidth, 1));
+			this.zoom(Math.exp(e.deltaY * 0.002), u.posToVal(e.offsetX, 'x'));
 		}
 	}
 
@@ -337,7 +335,7 @@ export class Timeline {
 			e.preventDefault();
 		});
 		u.over.addEventListener('dblclick', () => this.showAll());
-		u.over.addEventListener('wheel', (e) => this.onWheel(u, e, true), { passive: false });
+		u.over.addEventListener('wheel', (e) => this.onWheel(u, e), { passive: false });
 	}
 
 	// Overview: press or drag to move the view to the mouse, wheel moves the view.
@@ -364,7 +362,7 @@ export class Timeline {
 			e.preventDefault();
 		});
 		u.over.addEventListener('dblclick', () => this.showAll());
-		u.over.addEventListener('wheel', (e) => this.onWheel(u, e, false), { passive: false });
+		u.over.addEventListener('wheel', (e) => this.onWheel(u, e), { passive: false });
 	}
 
 	setSelection(time) {

@@ -17,7 +17,7 @@ function download(href) {
 }
 
 export class SessionsPanel {
-	constructor({ list, search, count, footer, selectionBar, onOpened, onError }) {
+	constructor({ list, search, count, footer, selectionBar, selectButton, onOpened, onError }) {
 		this.list = list;
 		this.search = search;
 		this.count = count;
@@ -28,6 +28,13 @@ export class SessionsPanel {
 		this.sessions = [];
 		this.running = false;
 		this.selected = new Set();
+		this.selecting = false;	// selection mode: checkboxes shown, a click selects
+		this.lastClicked = null;	// anchor for Shift+click ranges
+		this.selectButton = selectButton;
+		selectButton.addEventListener('click', () => this.setSelecting(!this.selecting));
+		document.addEventListener('keydown', (e) => {
+			if (e.key === 'Escape' && this.selecting && !document.querySelector('dialog[open]')) this.setSelecting(false);
+		});
 		this.editing = null;	// key of the session being renamed
 		this.tagging = null;	// key of the session getting a new tag
 		this.menu = null;		// key of the session whose menu is open
@@ -37,6 +44,32 @@ export class SessionsPanel {
 
 	setRunning(running) {
 		this.running = running;
+	}
+
+	setSelecting(selecting) {
+		this.selecting = selecting;
+		if (!selecting) this.selected.clear();
+		this.render();
+	}
+
+	toggle(s, range) {
+		if (s.running) return;
+		const shown = this.visibleSessions().filter((x) => !x.running);
+		if (range && this.lastClicked) {
+			// Shift+click selects everything between the last clicked item and this one.
+			const a = shown.findIndex((x) => x.key === this.lastClicked);
+			const b = shown.findIndex((x) => x.key === s.key);
+			if (a >= 0 && b >= 0) {
+				shown.slice(Math.min(a, b), Math.max(a, b) + 1).forEach((x) => this.selected.add(x.key));
+			}
+		} else if (this.selected.has(s.key)) {
+			this.selected.delete(s.key);
+		} else {
+			this.selected.add(s.key);
+		}
+		this.lastClicked = s.key;
+		this.selecting = true;
+		this.render();
 	}
 
 	async refresh() {
@@ -90,6 +123,7 @@ export class SessionsPanel {
 				await api.deleteSession(s.key);
 				this.selected.delete(s.key);
 			}
+			if (this.selecting && !this.selected.size) this.selecting = false;
 		});
 	}
 
@@ -111,19 +145,24 @@ export class SessionsPanel {
 		}
 	}
 
+	// In selection mode a toolbar replaces the search field.
 	renderSelectionBar(shown) {
 		const bar = this.selectionBar;
-		bar.classList.toggle('hidden', !this.selected.size);
-		if (!this.selected.size) return;
+		bar.classList.toggle('hidden', !this.selecting);
+		this.search.classList.toggle('hidden', this.selecting);
+		this.selectButton.classList.toggle('hidden', this.selecting);
+		this.list.classList.toggle('selecting', this.selecting);
+		if (!this.selecting) return;
 		const selectable = shown.filter((s) => !s.running);
 		const chosen = this.sessions.filter((s) => this.selected.has(s.key));
+		const all = selectable.length > 0 && selectable.every((s) => this.selected.has(s.key));
 		bar.replaceChildren(
-			el('span', { text: `${this.selected.size} selected` }),
-			selectable.every((s) => this.selected.has(s.key)) ? null
-				: el('button', { class: 'btn small ghost', text: 'All', title: 'Select all listed sessions', onclick: () => { selectable.forEach((s) => this.selected.add(s.key)); this.render(); } }),
+			el('button', { class: 'btn small ghost icon', text: '✕', title: 'Leave selection (Esc)', onclick: () => this.setSelecting(false) }),
+			el('span', { text: this.selected.size ? `${this.selected.size} selected` : 'Select sessions' }),
 			el('div', { class: 'spacer' }),
-			el('button', { class: 'btn small primary danger', text: 'Delete…', onclick: () => this.deleteSessions(chosen) }),
-			el('button', { class: 'btn small ghost', text: '✕', title: 'Clear the selection', onclick: () => { this.selected.clear(); this.render(); } }));
+			el('button', { class: 'btn small ghost', text: all ? 'None' : 'All',
+				onclick: () => { if (all) this.selected.clear(); else selectable.forEach((s) => this.selected.add(s.key)); this.render(); } }),
+			el('button', { class: 'btn small primary danger', text: 'Delete', disabled: !chosen.length, onclick: () => this.deleteSessions(chosen) }));
 	}
 
 	renderSession(s) {
@@ -135,9 +174,8 @@ export class SessionsPanel {
 		const startRename = () => { this.menu = null; this.editing = s.key; this.render(); };
 		const startTagging = () => { this.menu = null; this.tagging = s.key; this.render(); };
 
-		const checkbox = el('input', { type: 'checkbox', checked: this.selected.has(s.key), disabled: s.running,
-			title: s.running ? 'The running session cannot be selected' : 'Select', onclick: stop,
-			onchange: (e) => { if (e.target.checked) this.selected.add(s.key); else this.selected.delete(s.key); this.render(); } });
+		const checkbox = this.selecting ? el('input', { type: 'checkbox', checked: this.selected.has(s.key), disabled: s.running,
+			title: s.running ? 'The running session cannot be selected' : 'Select', onclick: (e) => { stop(e); this.toggle(s, e.shiftKey); } }) : null;
 
 		// Name, renamed in place: Enter or leaving the field saves, Esc cancels.
 		const name = this.editing === s.key
@@ -192,8 +230,12 @@ export class SessionsPanel {
 
 		return el('div', {
 			class: `session${s.current ? ' current' : ''}${this.selected.has(s.key) ? ' selected' : ''}`,
-			title: s.current ? 'Shown' : this.running ? 'Stop the measurement to open another session' : 'Open this session',
-			onclick: () => this.openSession(s),
+			title: this.selecting ? '' : s.current ? 'Shown' : this.running ? 'Stop the measurement to open another session' : 'Open this session (Ctrl+click to select)',
+			// Selection mode, Ctrl/Cmd+click or Shift+click select; a plain click opens.
+			onclick: (e) => {
+				if (this.selecting || e.ctrlKey || e.metaKey || e.shiftKey) this.toggle(s, e.shiftKey);
+				else this.openSession(s);
+			},
 		}, checkbox, title, more, el('div', { class: 'details', text: details }), tagRow, menu);
 	}
 

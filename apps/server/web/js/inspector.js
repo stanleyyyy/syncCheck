@@ -70,6 +70,8 @@ export class Inspector {
 		this.frozenWaveY = null;
 		this.wheelTimer = null;
 		this.corr = this.wave = this.overview = null;
+		this.dragTimer = null;
+		this.reserveHeights();
 		new ResizeObserver(() => this.resize()).observe(corrEl);
 		window.addEventListener('resize', () => this.resize());
 		this.updateReadouts();
@@ -81,12 +83,27 @@ export class Inspector {
 		this.clear();
 	}
 
-	// Parameters for /api/inspect matching the visible ranges.
+	// Keep the chart areas their size before data arrives, so the page does not jump.
+	reserveHeights() {
+		fitHeight();
+		this.corrEl.style.minHeight = `${HEIGHT.value}px`;
+		this.waveEl.style.minHeight = `${HEIGHT.value}px`;
+		this.overviewEl.style.minHeight = `${OVERVIEW_HEIGHT}px`;
+	}
+
+	// Parameters for /api/inspect: the visible ranges plus a margin on both sides, so dragging shows data right away.
 	params() {
-		const range = Math.max(Math.abs(this.corrView.min), Math.abs(this.corrView.max));
+		const c = this.corrView;
+		const range = Math.max(Math.abs(c.min), Math.abs(c.max)) + (c.max - c.min);
 		const w = this.waveView;
-		return { range: Math.min(range, this.maxLag).toFixed(3), window: (w.max - w.min).toFixed(3), offset: ((w.min + w.max) / 2).toFixed(3),
+		return { range: Math.min(range, this.maxLag).toFixed(3), window: (3 * (w.max - w.min)).toFixed(3), offset: ((w.min + w.max) / 2).toFixed(3),
 			align: this.align ? 1 : 0 };
+	}
+
+	// While dragging, fetch new data every ~80 ms so the charts follow the mouse.
+	fetchWhileDragging() {
+		if (this.dragTimer) return;
+		this.dragTimer = setTimeout(() => { this.dragTimer = null; this.onViewChange(true); }, 80);
 	}
 
 	// Aligned waveforms are read shifted by the server.
@@ -166,25 +183,27 @@ export class Inspector {
 		this.setCorrView({ min: min - margin, max: max + margin });
 	}
 
-	// Wheel zooms around the mouse (Shift or horizontal swipe moves); data is fetched once the wheel rests.
+	// Ctrl+wheel (or pinch) zooms around the mouse, a horizontal swipe moves; the plain wheel scrolls the page.
 	wheel(u, e, apply, freeze, unfreeze) {
+		const horizontal = Math.abs(e.deltaX) > Math.abs(e.deltaY);
+		if (!(e.ctrlKey || e.metaKey) && !horizontal) return;
 		e.preventDefault();
 		freeze?.();
 		const { min, max } = u.scales.x;
-		const horizontal = Math.abs(e.deltaX) > Math.abs(e.deltaY);
-		if (e.shiftKey || horizontal) {
-			const shift = (max - min) * (horizontal ? e.deltaX : e.deltaY) / Math.max(u.over.clientWidth, 1);
+		if (horizontal) {
+			const shift = (max - min) * e.deltaX / Math.max(u.over.clientWidth, 1);
 			apply({ min: min + shift, max: max + shift }, false);
 		} else {
 			const at = u.posToVal(e.offsetX, 'x');
 			const factor = Math.exp(e.deltaY * 0.002);
 			apply({ min: at - (at - min) * factor, max: at + (max - at) * factor }, false);
 		}
+		this.fetchWhileDragging();
 		clearTimeout(this.wheelTimer);
 		this.wheelTimer = setTimeout(() => { unfreeze?.(); this.onViewChange(); }, 250);
 	}
 
-	// Dragging moves the view; the data is fetched when the mouse is released.
+	// Dragging moves the view; data is fetched while dragging and once more when the mouse is released.
 	bindDrag(u, apply, freeze, unfreeze) {
 		let view;
 		onDrag(u.over,
@@ -192,6 +211,7 @@ export class Inspector {
 			(dx) => {
 				const shift = -dx * (view.max - view.min) / Math.max(u.over.clientWidth, 1);
 				apply({ min: view.min + shift, max: view.max + shift }, false);
+				this.fetchWhileDragging();
 			},
 			() => { unfreeze?.(); this.onViewChange(); });
 	}
@@ -360,12 +380,17 @@ export class Inspector {
 			hooks: {
 				draw: [(u) => this.drawWindow(u, colors)],
 				ready: [(u) => {
-					onDrag(u.over, (e) => moveTo(e.clientX), (dx, m) => moveTo(m.clientX), () => this.onViewChange());
+					onDrag(u.over, (e) => { moveTo(e.clientX); this.fetchWhileDragging(); },
+						(dx, m) => { moveTo(m.clientX); this.fetchWhileDragging(); }, () => this.onViewChange());
+					// Ctrl+wheel or a horizontal swipe moves the window.
 					u.over.addEventListener('wheel', (e) => {
+						const horizontal = Math.abs(e.deltaX) > Math.abs(e.deltaY);
+						if (!(e.ctrlKey || e.metaKey) && !horizontal) return;
 						e.preventDefault();
 						const width = this.waveView.max - this.waveView.min;
-						const shift = width * (e.deltaY || e.deltaX) / 200;
+						const shift = width * (horizontal ? e.deltaX : e.deltaY) / 200;
 						this.setWaveView({ min: this.waveView.min + shift, max: this.waveView.max + shift }, false);
+						this.fetchWhileDragging();
 						clearTimeout(this.wheelTimer);
 						this.wheelTimer = setTimeout(() => this.onViewChange(), 250);
 					}, { passive: false });
@@ -401,7 +426,7 @@ export class Inspector {
 	}
 
 	resize() {
-		fitHeight();
+		this.reserveHeights();
 		this.corr?.setSize({ width: this.corrEl.clientWidth, height: HEIGHT.value });
 		this.wave?.setSize({ width: this.waveEl.clientWidth, height: HEIGHT.value });
 		this.overview?.setSize({ width: this.overviewEl.clientWidth, height: OVERVIEW_HEIGHT });

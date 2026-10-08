@@ -19,6 +19,7 @@ const app = {
 	selection: null,	// selected session time, null = live / latest
 	inspectTimer: null,
 	inspectSeq: 0,
+	renderedSeq: 0,
 	audio: null,		// playing Audio element
 };
 
@@ -30,22 +31,26 @@ const timeline = new Timeline({
 const inspector = new Inspector({
 	corrEl: $('corrChart'), waveEl: $('waveChart'), overviewEl: $('waveOverview'), keysEl: $('waveKeys'), tableEl: $('inspectTable'), noAudioEl: $('noAudio'),
 	corrReadout: $('corrReadout'), waveReadout: $('waveReadout'),
-	onViewChange: () => scheduleInspect(150, true),
+	// immediate: while dragging (already throttled by the inspector)
+	onViewChange: (immediate) => (immediate ? inspect() : scheduleInspect(150, true)),
 });
 const settingsDrawer = new SettingsDrawer({ drawer: $('settingsDrawer'), scrim: $('scrim'), body: $('settingsBody'),
 	onSaved: (settings) => { app.state.settings = settings; renderHeader(); } });
 const sessions = new SessionsPanel({ list: $('sessionList'), search: $('sessionSearch'), count: $('sessionCount'), footer: $('sessionsDisk'),
-	selectionBar: $('selectionBar'),
+	selectionBar: $('selectionBar'), selectButton: $('selectSessions'),
 	onOpened: (state) => onState(state), onError: showError });
 
-// Sidebar visibility is remembered per browser; narrow windows start without it.
-function setSidebar(show) {
+// The session list collapses to a narrow rail; the choice is remembered, narrow windows start collapsed.
+function setSidebar(show, remember = true) {
 	$('appBody').classList.toggle('collapsed', !show);
-	try { localStorage.setItem('sidebar', show ? '1' : '0'); } catch (e) { /* storage unavailable */ }
+	$('toggleSidebar').title = show ? 'Collapse the session list' : 'Show the session list';
+	if (remember) {
+		try { localStorage.setItem('sidebar', show ? '1' : '0'); } catch (e) { /* storage unavailable */ }
+	}
 }
 let sidebarStored = null;
 try { sidebarStored = localStorage.getItem('sidebar'); } catch (e) { /* storage unavailable */ }
-setSidebar(sidebarStored === null ? window.innerWidth > 900 : sidebarStored === '1');
+setSidebar(window.innerWidth >= 1100 && sidebarStored !== '0', false);
 $('toggleSidebar').addEventListener('click', () => setSidebar($('appBody').classList.contains('collapsed')));
 const signalDialog = new SignalDialog({ dialog: $('signalDialog'), body: $('signalBody'), download: $('downloadSignal') });
 
@@ -257,7 +262,9 @@ async function inspect() {
 	if (app.selection === null) params.live = 1; else params.t = app.selection;
 	try {
 		const result = await api.inspect(params);
-		if (seq !== app.inspectSeq) return;
+		// Show any answer newer than the one shown; while dragging several requests overlap.
+		if (seq <= app.renderedSeq) return;
+		app.renderedSeq = seq;
 		$('inspectError').classList.add('hidden');
 		inspector.render(result);
 	} catch (e) {
