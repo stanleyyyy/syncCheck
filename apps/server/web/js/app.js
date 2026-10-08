@@ -331,6 +331,7 @@ function startPlayback() {
 	const tick = () => {
 		if (app.audio !== audio) return;
 		timeline.setPlayhead(from + audio.currentTime);
+		inspector.setPlayhead(from + audio.currentTime);
 		requestAnimationFrame(tick);
 	};
 	audio.addEventListener('playing', () => requestAnimationFrame(tick));
@@ -346,6 +347,7 @@ function stopPlayback() {
 	}
 	$('playButton').textContent = '▶ Play';
 	timeline.setPlayhead(null);
+	inspector.setPlayhead(null);
 }
 
 // Keep a selected moment in view.

@@ -85,6 +85,7 @@ export class Inspector {
 		this.waveSeq = this.waveRendered = 0;
 		this.waveDelays = '';
 		this.overviewData = null;
+		this.playhead = null;
 	}
 
 	setPairs(labels, maxLagMs) {
@@ -472,13 +473,27 @@ export class Inspector {
 		ctx.restore();
 	}
 
+	// The cursor (dashed) and the playback position (solid).
 	drawCursor(u, colors) {
-		if (this.cursor === null) return;
-		const x = u.valToPos(this.cursor, 'x', true);
-		if (x < u.bbox.left || x > u.bbox.left + u.bbox.width) return;
+		const inside = (x) => x >= u.bbox.left && x <= u.bbox.left + u.bbox.width;
 		u.ctx.save();
-		verticalLine(u, x, colors.accent, true);
+		for (const [time, dash] of [[this.cursor, true], [this.playhead, false]]) {
+			if (time === null) continue;
+			const x = u.valToPos(time, 'x', true);
+			if (inside(x)) verticalLine(u, x, colors.accent, dash);
+		}
 		u.ctx.restore();
+	}
+
+	// Playback position; the view pages along to keep it visible.
+	setPlayhead(time) {
+		this.playhead = time;
+		if (time !== null && this.waveView && (time < this.waveView.min || time > this.waveView.max)) {
+			const width = this.waveView.max - this.waveView.min;
+			this.moveWaveView({ min: time, max: time + width }, false);
+			this.refreshWhileDragging(() => this.fetchWave());
+		}
+		this.redrawWave();
 	}
 
 	// The recording grew: refresh the navigator, at most every 2 s.
@@ -567,6 +582,7 @@ export class Inspector {
 		ctx.lineWidth = devicePixelRatio;
 		ctx.strokeRect(left, u.bbox.top, right - left, u.bbox.height);
 		if (this.cursor !== null) verticalLine(u, u.valToPos(this.cursor, 'x', true), colors.accent, true);
+		if (this.playhead !== null) verticalLine(u, u.valToPos(this.playhead, 'x', true), colors.accent, false);
 		ctx.restore();
 	}
 
