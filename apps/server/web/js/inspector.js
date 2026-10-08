@@ -156,7 +156,7 @@ export class Inspector {
 		this.cursor = result.time;
 		if (!this.waveView) {
 			this.waveView = { min: this.cursor - DEFAULT_WAVE_WIDTH / 2, max: this.cursor + DEFAULT_WAVE_WIDTH / 2 };
-		} else if (result.live && this.followLive) {
+		} else if ((result.live || this.playhead !== null) && this.followLive) {
 			const width = this.waveView.max - this.waveView.min;
 			this.waveView = { min: this.cursor - width / 2, max: this.cursor + width / 2 };
 		} else {
@@ -511,15 +511,10 @@ export class Inspector {
 		u.ctx.restore();
 	}
 
-	// Playback position; views of at least a second page along to keep it visible (narrower ones would only flicker).
+	// While playing, the inspected moment follows the playback like the latest one while recording.
 	setPlayhead(time) {
+		if (this.playhead === null && time !== null) this.followLive = true;
 		this.playhead = time;
-		if (time !== null && this.waveView && this.waveView.max - this.waveView.min >= 1
-			&& (time < this.waveView.min || time > this.waveView.max)) {
-			const width = this.waveView.max - this.waveView.min;
-			this.moveWaveView({ min: time, max: time + width }, false);
-			this.refreshWhileDragging(() => this.fetchWave());
-		}
 		this.redrawWave();
 	}
 

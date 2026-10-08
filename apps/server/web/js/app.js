@@ -333,6 +333,8 @@ function startPlayback() {
 	inspector.setPlayhead(from);
 	// The browser reports playing even when it cannot open an audio output; then its clock stands still.
 	let lastTime = -1, lastChange = 0;
+	// The played moment is inspected about four times a second, like the latest one while recording.
+	let lastInspect = 0, inspecting = null;
 	const tick = (now) => {
 		if (app.audio !== audio) return;
 		if (audio.currentTime !== lastTime) {
@@ -343,8 +345,14 @@ function startPlayback() {
 			stopPlayback();
 			return;
 		}
-		timeline.setPlayhead(from + audio.currentTime);
-		inspector.setPlayhead(from + audio.currentTime);
+		const position = from + audio.currentTime;
+		timeline.setPlayhead(position);
+		inspector.setPlayhead(position);
+		if (now - lastInspect >= 250 && !inspecting) {
+			lastInspect = now;
+			showSelection(position);
+			inspecting = inspect().finally(() => { inspecting = null; });
+		}
 		requestAnimationFrame(tick);
 	};
 	audio.addEventListener('playing', () => {
