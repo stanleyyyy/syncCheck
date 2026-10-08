@@ -1,0 +1,106 @@
+# Builds the packages for Linux and Windows. A pushed tag vX.Y.Z (matching the version in
+# CMakeLists.txt) publishes them as a GitHub release; a manual run only keeps them as artifacts.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    # The oldest supported Ubuntu, so that the packages run on older distributions too (glibc is not bundled).
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check the tag against the project version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          version=$(sed -n 's/^project(syncCheck VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match version $version in CMakeLists.txt"
+            exit 1
+          fi
+
+      - name: Build and test
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel
+          ctest --test-dir build --output-on-failure
+
+      - name: Packages
+        run: |
+          cd build
+          cpack -G "DEB;TGZ"
+
+      - name: AppImage
+        run: |
+          packaging/appimage/build-appimage.sh build-appimage
+          version=$(sed -n 's/^project(syncCheck VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          mv build-appimage/Sync-Analyzer-x86_64.AppImage "build-appimage/Sync-Analyzer-$version-x86_64.AppImage"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux
+          path: |
+            build/*.deb
+            build/*.tar.gz
+            build-appimage/Sync-Analyzer-*.AppImage
+          if-no-files-found: error
+
+  windows:
+    runs-on: windows-latest
+    # bash stops at the first failing command (PowerShell does not for programs).
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build and test
+        run: |
+          cmake -S . -B build
+          cmake --build build --config Release --parallel
+          ctest --test-dir build -C Release --output-on-failure
+
+      - name: Packages
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          if (-not (Get-Command makensis -ErrorAction SilentlyContinue)) {
+            choco install nsis -y --no-progress
+            $env:PATH += ";${env:ProgramFiles(x86)}\NSIS"
+          }
+          cd build
+          cpack -C Release -G "ZIP;NSIS"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows
+          path: |
+            build/*.zip
+            build/*.exe
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [linux, windows]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: packages
+          merge-multiple: true
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # The artifacts keep their build directories; publish the files in them.
+        run: |
+          find packages -type f
+          gh release create "$GITHUB_REF_NAME" $(find packages -type f) --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes

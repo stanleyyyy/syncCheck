@@ -115,7 +115,14 @@ packaging/appimage/build-appimage.sh    # Linux: portable AppImage
 ```
 
 Build packages on the oldest distribution you want to support; glibc is not
-bundled. Installers contain the applications. The library, headers and CMake
+bundled.
+
+Releases are built by GitHub Actions (`.github/workflows/release.yml`): set the
+version in `CMakeLists.txt`, commit, then push a matching tag, e.g.
+`git tag v0.2.0 && git push origin v0.2.0`. The workflow builds and tests on
+Ubuntu 22.04 and Windows and publishes the `.deb`, `.tar.gz`, AppImage, `.zip`
+and installer as a GitHub release. Running the workflow by hand (Actions tab)
+only builds the packages and keeps them as artifacts. Installers contain the applications. The library, headers and CMake
 package (`find_package(synccheck)`, target `synccheck::synccheck`) are
 installed with `cmake --install build --component development`.
 
