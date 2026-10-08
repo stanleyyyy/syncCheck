@@ -386,7 +386,7 @@ int main(int argc, char *argv[])
 	server.Put(R"(/api/sessions/([\w-]+))", [&](const httplib::Request &req, httplib::Response &res) {
 		std::string error;
 		try {
-			if (!service.renameSession(req.matches[1], json::parse(req.body).at("name").get<std::string>(), error)) {
+			if (!service.updateSession(req.matches[1], json::parse(req.body), error)) {
 				sendError(res, error);
 				return;
 			}

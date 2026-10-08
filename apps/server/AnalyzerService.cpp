@@ -671,6 +671,7 @@ void AnalyzerService::writeSessionInfoLocked() const
 	const json info = {
 		{ "key", session.m_key },
 		{ "name", session.m_name },
+		{ "tags", session.m_tags },
 		{ "started", session.m_started },
 		{ "input", session.m_input },
 		{ "source", session.m_source },
@@ -755,12 +756,12 @@ json AnalyzerService::listSessions() const
 			continue;
 		}
 		const std::string key = entry.path().filename().string();
-		json info = { { "key", key }, { "name", key }, { "started", "" }, { "duration", 0.0 } };
+		json info = { { "key", key }, { "name", key }, { "tags", json::array() }, { "started", "" }, { "duration", 0.0 } };
 		std::ifstream file(entry.path() / "session.json");
 		if (file) {
 			try {
 				const json stored = json::parse(file);
-				for (const char *field : { "name", "started", "input", "source", "sampleRate", "channels", "duration", "status", "recorded" }) {
+				for (const char *field : { "name", "tags", "started", "input", "source", "sampleRate", "channels", "duration", "status", "recorded" }) {
 					if (stored.contains(field)) {
 						info[field] = stored[field];
 					}
@@ -787,6 +788,7 @@ json AnalyzerService::listSessions() const
 		info["running"] = current && m_running;
 		if (current) {
 			info["name"] = m_session.m_name;
+			info["tags"] = m_session.m_tags;
 			info["duration"] = m_session.m_time.empty() ? 0.0 : m_session.m_time.back();
 			info["status"] = m_status;
 		}
@@ -821,6 +823,7 @@ bool AnalyzerService::openSession(const std::string &key, std::string &error)
 		}
 		const json info = json::parse(file);
 		session.m_name = info.value("name", key);
+		session.m_tags = info.value("tags", std::vector<std::string>());
 		session.m_started = info.value("started", "");
 		session.m_input = info.value("input", "");
 		session.m_source = info.value("source", "");
@@ -887,28 +890,35 @@ bool AnalyzerService::openSession(const std::string &key, std::string &error)
 	return true;
 }
 
-bool AnalyzerService::renameSession(const std::string &key, const std::string &name, std::string &error)
+bool AnalyzerService::updateSession(const std::string &key, const json &changes, std::string &error)
 {
 	std::lock_guard<std::mutex> lock(m_mutex);
 	fs_path dir;
 	if (!sessionDir(key, dir, error)) {
 		return false;
 	}
-	if (key == m_session.m_key) {
-		m_session.m_name = name;
-		writeSessionInfoLocked();
-		m_stateVersion++;
-		notify();
-		return true;
-	}
 	try {
+		const bool hasName = changes.contains("name");
+		const bool hasTags = changes.contains("tags");
+		const std::string name = hasName ? changes.at("name").get<std::string>() : "";
+		const std::vector<std::string> tags = hasTags ? changes.at("tags").get<std::vector<std::string>>() : std::vector<std::string>();
+
+		if (key == m_session.m_key) {
+			if (hasName) m_session.m_name = name;
+			if (hasTags) m_session.m_tags = tags;
+			writeSessionInfoLocked();
+			m_stateVersion++;
+			notify();
+			return true;
+		}
 		std::ifstream in(dir / "session.json");
 		json info = in ? json::parse(in) : json::object();
 		in.close();
-		info["name"] = name;
+		if (hasName) info["name"] = name;
+		if (hasTags) info["tags"] = tags;
 		std::ofstream(dir / "session.json") << info.dump(2);
 	} catch (const std::exception &e) {
-		error = e.what();
+		error = std::string("invalid change: ") + e.what();
 		return false;
 	}
 	return true;

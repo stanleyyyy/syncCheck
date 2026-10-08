@@ -126,7 +126,11 @@ public:
 	 */
 	bool openSession(const std::string &key, std::string &error);
 
-	bool renameSession(const std::string &key, const std::string &name, std::string &error);
+	/**
+	 * @brief Change the name and/or the tags of a session.
+	 * @param changes Object with "name" (string) and/or "tags" (array of strings).
+	 */
+	bool updateSession(const std::string &key, const nlohmann::json &changes, std::string &error);
 
 	/**
 	 * @brief Delete a session directory. The input file of a file session is kept.
@@ -188,6 +192,7 @@ private:
 		int m_id = 0;
 		std::string m_key;		///< Directory name, also the identifier in exported file names.
 		std::string m_name;
+		std::vector<std::string> m_tags;
 		std::string m_source;	///< "device" or "file"
 		bool m_recorded = false;	///< m_audio is a recording made by this session
 		std::chrono::steady_clock::time_point m_startedAt;

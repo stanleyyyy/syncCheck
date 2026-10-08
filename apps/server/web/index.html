@@ -10,6 +10,7 @@
 </head>
 <body>
 	<header class="topbar">
+		<button class="btn ghost icon" id="toggleSidebar" title="Show or hide the session library" aria-label="Sessions">☰</button>
 		<div class="brand">Sync Analyzer</div>
 		<div class="source" id="source"></div>
 		<div class="spacer"></div>
@@ -26,11 +27,21 @@
 					<a href="api/recording.wav" id="exportAudio">Session audio (WAV)</a>
 				</div>
 			</div>
-			<button class="btn ghost" id="openSessions">Sessions</button>
 			<button class="btn ghost" id="openSettings">Settings</button>
 			<button class="btn ghost" id="themeToggle" title="Toggle light/dark theme" aria-label="Toggle theme">◐</button>
 		</div>
 	</header>
+
+	<div class="app-body" id="appBody">
+	<aside class="sidebar" id="sidebar" aria-label="Sessions">
+		<div class="sidebar-head">
+			<h2>Sessions</h2>
+			<span class="muted num" id="sessionCount"></span>
+		</div>
+		<input type="search" id="sessionSearch" placeholder="Search name, input or #tag">
+		<div class="session-list" id="sessionList"></div>
+		<div class="sidebar-foot muted num" id="sessionsDisk"></div>
+	</aside>
 
 	<main>
 		<div class="error-banner hidden" id="errorBanner"></div>
@@ -105,6 +116,7 @@
 			</section>
 		</div>
 	</main>
+	</div>
 
 	<div class="scrim hidden" id="scrim"></div>
 	<aside class="drawer hidden" id="settingsDrawer" aria-label="Settings">
@@ -116,12 +128,6 @@
 			<button class="btn" id="cancelSettings">Cancel</button>
 			<button class="btn primary" id="saveSettings">Save</button>
 		</footer>
-	</aside>
-
-	<aside class="drawer wide hidden" id="sessionsDrawer" aria-label="Sessions">
-		<header><h2>Sessions</h2><div class="spacer"></div><button class="btn ghost" id="closeSessions" aria-label="Close">✕</button></header>
-		<div class="body" id="sessionsBody"></div>
-		<footer><span class="muted num" id="sessionsDisk"></span></footer>
 	</aside>
 
 	<dialog id="signalDialog">

@@ -7,7 +7,7 @@ const HEIGHT = { delay: 250, metric: 130, overview: 46 };
 
 // The delay chart takes the height the window has left, so the page fits on one screen.
 function fitHeights() {
-	HEIGHT.delay = Math.max(200, Math.min(520, window.innerHeight - 470));
+	HEIGHT.delay = Math.max(200, Math.min(520, window.innerHeight - 510));
 }
 
 const METRICS = {

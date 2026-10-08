@@ -22,6 +22,7 @@ export const api = {
 	sessions: () => request('GET', 'api/sessions'),
 	openSession: (key) => request('POST', `api/sessions/${encodeURIComponent(key)}/open`),
 	renameSession: (key, name) => request('PUT', `api/sessions/${encodeURIComponent(key)}`, { name }),
+	tagSession: (key, tags) => request('PUT', `api/sessions/${encodeURIComponent(key)}`, { tags }),
 	deleteSession: (key) => request('DELETE', `api/sessions/${encodeURIComponent(key)}`),
 	start: () => request('POST', 'api/start'),
 	stop: () => request('POST', 'api/stop'),

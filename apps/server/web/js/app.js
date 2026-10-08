@@ -6,7 +6,7 @@ import { Timeline } from './timeline.js';
 import { Inspector } from './inspector.js';
 import { SettingsDrawer } from './settings.js';
 import { SignalDialog } from './signal.js';
-import { SessionsDrawer } from './sessions.js';
+import { SessionsPanel } from './sessions.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -34,8 +34,18 @@ const inspector = new Inspector({
 });
 const settingsDrawer = new SettingsDrawer({ drawer: $('settingsDrawer'), scrim: $('scrim'), body: $('settingsBody'),
 	onSaved: (settings) => { app.state.settings = settings; renderHeader(); } });
-const sessionsDrawer = new SessionsDrawer({ drawer: $('sessionsDrawer'), scrim: $('scrim'), body: $('sessionsBody'), footer: $('sessionsDisk'),
+const sessions = new SessionsPanel({ list: $('sessionList'), search: $('sessionSearch'), count: $('sessionCount'), footer: $('sessionsDisk'),
 	onOpened: (state) => onState(state), onError: showError });
+
+// Sidebar visibility is remembered per browser; narrow windows start without it.
+function setSidebar(show) {
+	$('appBody').classList.toggle('collapsed', !show);
+	try { localStorage.setItem('sidebar', show ? '1' : '0'); } catch (e) { /* storage unavailable */ }
+}
+let sidebarStored = null;
+try { sidebarStored = localStorage.getItem('sidebar'); } catch (e) { /* storage unavailable */ }
+setSidebar(sidebarStored === null ? window.innerWidth > 900 : sidebarStored === '1');
+$('toggleSidebar').addEventListener('click', () => setSidebar($('appBody').classList.contains('collapsed')));
 const signalDialog = new SignalDialog({ dialog: $('signalDialog'), body: $('signalBody'), download: $('downloadSignal') });
 
 function showError(message) {
@@ -191,7 +201,11 @@ function onState(state) {
 	renderHeader();
 	updateInspectorHeader();
 	if (!state.running) $('disk').classList.add('hidden');
-	if (sessionsDrawer.isOpen()) sessionsDrawer.refresh();
+	sessions.setRunning(state.running);
+	if (!previous || previous.running !== state.running || !previous.session !== !state.session
+		|| (previous.session && state.session && (previous.session.id !== state.session.id || previous.session.name !== state.session.name))) {
+		sessions.refresh();
+	}
 	if (previous && previous.running && !state.running) scheduleInspect(0);
 }
 
@@ -305,9 +319,7 @@ document.addEventListener('keydown', (e) => {
 	if (e.target.closest('input, select, textarea, dialog') || !app.store.t.length) return;
 	const t = app.store.t;
 	if (e.key === 'Escape') {
-		if (!$('settingsDrawer').classList.contains('hidden')) settingsDrawer.close();
-		else if (sessionsDrawer.isOpen()) sessionsDrawer.close();
-		else backToLive();
+		if (!$('settingsDrawer').classList.contains('hidden')) settingsDrawer.close(); else backToLive();
 		return;
 	}
 	if (e.key === ' ') {
@@ -351,15 +363,13 @@ $('startStop').addEventListener('click', async () => {
 		button.disabled = false;
 	}
 });
-const openSettings = () => { sessionsDrawer.close(); settingsDrawer.open(app.state.settings, app.state.running); };
-$('openSessions').addEventListener('click', () => { settingsDrawer.close(); sessionsDrawer.open(); });
-$('closeSessions').addEventListener('click', () => sessionsDrawer.close());
+const openSettings = () => settingsDrawer.open(app.state.settings, app.state.running);
 $('openSettings').addEventListener('click', openSettings);
 $('emptySettings').addEventListener('click', openSettings);
 $('closeSettings').addEventListener('click', () => settingsDrawer.close());
 $('cancelSettings').addEventListener('click', () => settingsDrawer.close());
 $('resetSettings').addEventListener('click', () => settingsDrawer.reset());
-$('scrim').addEventListener('click', () => { settingsDrawer.close(); sessionsDrawer.close(); });
+$('scrim').addEventListener('click', () => settingsDrawer.close());
 $('saveSettings').addEventListener('click', () => settingsDrawer.save());
 $('openSignal').addEventListener('click', () => {
 	const current = session();
@@ -396,6 +406,9 @@ onThemeChange(() => {
 	inspector.rebuild();
 	updateCards();
 });
+
+// While measuring, keep the running session's duration and size in the list current.
+setInterval(() => { if (app.state && app.state.running) sessions.refresh(); }, 5000);
 
 // Start
 updateRangeButtons();
