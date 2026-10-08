@@ -231,7 +231,7 @@ bool SyncAnalyzer::run(const SyncAnalyzerSettings &settings, const StatsCallback
 
 		if (multichannel) {
 			// In non-mix mode, inputBuffer is interleaved over all physical channels.
-			processingBuffer.resize(numFrames * channels);
+			processingBuffer.resize(numFrames * procChannels);
 			// For each frame, extract only the channels needed as defined by assignments.
 			for (unsigned int i = 0; i < numFrames; i++) {
 				for (unsigned int m = 0; m < assignments.size(); m++) {
