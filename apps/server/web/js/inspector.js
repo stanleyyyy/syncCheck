@@ -65,6 +65,8 @@ export class Inspector {
 		this.align = false;
 		this.maxLag = 340;
 		this.corrView = { ...DEFAULT_CORR };
+		// The correlation view stays centered on the found peaks until the user moves it.
+		this.corrFollow = true;
 		this.resetWaveState();
 		this.frozenWaveY = null;
 		this.wheelTimer = null;
@@ -160,6 +162,7 @@ export class Inspector {
 		} else {
 			this.revealCursor(false);
 		}
+		if (this.corrFollow) this.centerCorrelation(result);
 		this.updateReadouts();
 		this.renderCorrelation(result);
 		this.renderTable(result);
@@ -224,8 +227,30 @@ export class Inspector {
 		this.setWaveView({ min: this.cursor - width / 2, max: this.cursor + width / 2 }, fetch);
 	}
 
+	// Center on the peaks (all pairs' delays), wide enough to show all of them; more data is fetched
+	// when the new view is outside the lags of this answer.
+	centerCorrelation(result) {
+		const delays = result.pairs.map((p) => p.delay).filter(Number.isFinite);
+		if (!delays.length) return;
+		const min = Math.min(...delays), max = Math.max(...delays);
+		const width = Math.max(this.corrView.max - this.corrView.min, (max - min) * 1.4 + 1);
+		const center = (min + max) / 2;
+		this.setCorrView({ min: center - width / 2, max: center + width / 2 }, false);
+		const lag = result.lag;
+		if (lag.length && (this.corrView.min < lag[0] || this.corrView.max > lag[lag.length - 1])) this.onViewChange();
+	}
+
+	// Moved by the user: stop following the peaks.
+	moveCorrView(view, fetch) {
+		this.corrFollow = false;
+		this.setCorrView(view, fetch);
+	}
+
 	resetCorrelation() {
-		this.setCorrView(DEFAULT_CORR);
+		this.corrFollow = true;
+		this.setCorrView(DEFAULT_CORR, false);
+		if (this.result) this.centerCorrelation(this.result);
+		this.onViewChange();
 	}
 
 	// The middle of the analyzed block, at the cursor.
@@ -240,6 +265,7 @@ export class Inspector {
 		const delays = this.result ? this.result.pairs.map((p) => p.delay) : [0];
 		const min = Math.min(0, ...delays), max = Math.max(0, ...delays);
 		const margin = Math.max(1, (max - min) * 0.3);
+		this.corrFollow = false;
 		this.setCorrView({ min: min - margin, max: max + margin });
 	}
 
@@ -315,8 +341,8 @@ export class Inspector {
 			hooks: {
 				draw: [(u) => this.drawPeaks(u)],
 				ready: [(u) => {
-					u.over.addEventListener('wheel', (e) => this.wheel(u, e, (v, f) => this.setCorrView(v, f), refresh), { passive: false });
-					this.bindDrag(u, (v, f) => this.setCorrView(v, f), refresh);
+					u.over.addEventListener('wheel', (e) => this.wheel(u, e, (v, f) => this.moveCorrView(v, f), refresh), { passive: false });
+					this.bindDrag(u, (v, f) => this.moveCorrView(v, f), refresh);
 					u.over.addEventListener('dblclick', () => this.fitCorrelation());
 				}],
 			},
