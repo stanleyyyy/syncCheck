@@ -11,6 +11,7 @@ struct AudioDeviceInfo
 	std::string m_name;		///< Human readable device name, also accepted as a device specification.
 	std::string m_backend;	///< Name of the backend providing the device (e.g. "ALSA", "PulseAudio", "WASAPI").
 	bool m_isDefault = false;
+	unsigned int m_maxChannels = 0;	///< Highest native channel count, 0 if unknown.
 };
 
 /**

@@ -1,5 +1,7 @@
 #include "SyncCheck.h"
 #include "TestSignalGenerator.h"
+#include "NoiseSignalGenerator.h"
+#include "WavFile.h"
 #include "Logger.h"
 #include "CLI11.hpp"
 #include <sstream>
@@ -74,8 +76,34 @@ int main(int argc, char *argv[])
 	app.add_option("--interp", config.interpFactor, "Interpolation factor");
 	app.add_option("--delays", delays, "Comma-separated list of delays in ms for each band");
 
+	std::string mode = "bands";
+	unsigned int channels = 2;
+	app.add_option("-m,--mode", mode, "bands: frequency shifted bands (mix mode); "
+		"channels: identical noise on all channels (channel mode), --delays per channel")->check(CLI::IsMember({ "bands", "channels" }));
+	app.add_option("-c,--channels", channels, "Channel mode: number of channels")->check(CLI::Range(2, 64));
+
 	CLI11_PARSE(app, argc, argv);
 	config.verbose = !quiet;
+
+	if (mode == "channels") {
+		std::vector<float> channelDelays(channels, 0.0f);
+		if (!delays.empty()) {
+			channelDelays = parseDelays(delays, channels);
+			if (channelDelays.empty()) {
+				return 1;
+			}
+		}
+		const std::string output = app.count("--output") ? config.outputPrefix : "sync_test_noise.wav";
+		const std::vector<float> signal = generateNoiseTestSignal(channels, config.sampleRate, config.duration, channelDelays);
+		WavWriter writer;
+		if (!writer.open(output, channels, config.sampleRate)) {
+			DBG_ERROR("Cannot write " << output);
+			return 1;
+		}
+		writer.writeFrames(signal.data(), signal.size() / channels);
+		DBG_INFO("Written " << config.duration << " s of " << channels << " channel noise to " << output);
+		return 0;
+	}
 
 	if (!delays.empty()) {
 		config.delays = parseDelays(delays, config.numBands);

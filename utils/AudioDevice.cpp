@@ -135,6 +135,13 @@ std::vector<AudioDeviceInfo> AudioDevices::list(Direction direction)
 			info.m_name = infos[i].name;
 			info.m_backend = ma_get_backend_name(context.backend);
 			info.m_isDefault = infos[i].isDefault;
+
+			ma_device_info details;
+			if (ma_context_get_device_info(&context, isCapture ? ma_device_type_capture : ma_device_type_playback, &infos[i].id, &details) == MA_SUCCESS) {
+				for (ma_uint32 f = 0; f < details.nativeDataFormatCount; f++) {
+					info.m_maxChannels = std::max<unsigned int>(info.m_maxChannels, details.nativeDataFormats[f].channels);
+				}
+			}
 			devices.push_back(info);
 		}
 	}
