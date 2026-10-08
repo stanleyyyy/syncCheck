@@ -14,6 +14,7 @@ include(GNUInstallDirs)
 
 option(SYNCCHECK_BUILD_TOOLS "Build command line tools" ON)
 option(SYNCCHECK_BUILD_TESTS "Build test programs" ON)
+option(SYNCCHECK_BUILD_SERVER "Build the web UI server" ON)
 option(SYNCCHECK_BUILD_ALSA_PLUGIN "Build the ALSA bandmover plugin (Linux only)" OFF)
 
 
@@ -123,6 +124,10 @@ if(SYNCCHECK_BUILD_TOOLS)
 	target_include_directories(sync_generator PRIVATE third_party/CLI11)
 
 	install(TARGETS sync_analyzer sync_generator DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT applications)
+endif()
+
+if(SYNCCHECK_BUILD_SERVER)
+	add_subdirectory(apps/server)
 endif()
 
 if(SYNCCHECK_BUILD_TESTS)

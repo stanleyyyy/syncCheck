@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Sync Analyzer</title>
+	<link rel="icon" href="icon.svg" type="image/svg+xml">
+	<link rel="stylesheet" href="vendor/uPlot.min.css">
+	<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+	<header class="topbar">
+		<div class="brand">Sync Analyzer</div>
+		<div class="source" id="source"></div>
+		<div class="spacer"></div>
+		<span class="status" id="status" data-state="idle"><span class="dot"></span><span id="statusText">Idle</span></span>
+		<span class="num muted" id="elapsed"></span>
+		<div class="actions">
+			<button class="btn primary" id="startStop">Start</button>
+			<button class="btn ghost" id="openSignal" title="Create a test signal">Test signal</button>
+			<div class="menu">
+				<button class="btn ghost" id="exportButton" aria-haspopup="true">Export</button>
+				<div class="menu-list hidden" id="exportMenu">
+					<a href="api/measurements.csv" id="exportCsv">Measurements (CSV)</a>
+					<a href="api/recording.wav" id="exportAudio">Session audio (WAV)</a>
+				</div>
+			</div>
+			<button class="btn ghost" id="openSettings">Settings</button>
+			<button class="btn ghost" id="themeToggle" title="Toggle light/dark theme" aria-label="Toggle theme">◐</button>
+		</div>
+	</header>
+
+	<main>
+		<div class="error-banner hidden" id="errorBanner"></div>
+
+		<section class="panel empty" id="empty">
+			<h1>Measure audio synchronization</h1>
+			<p>Play the same wideband signal (music or the test signal) on the outputs you want to compare,</p>
+			<p>capture them on separate input channels, and press <strong>Start</strong>.</p>
+			<p class="muted" id="emptySetup"></p>
+			<button class="btn" id="emptySettings">Open settings</button>
+		</section>
+
+		<section class="pairs hidden" id="pairs" aria-label="Measured pairs"></section>
+
+		<section class="panel hidden" id="timelinePanel">
+			<div class="panel-head">
+				<h2>Delay over time</h2>
+				<div class="spacer"></div>
+				<div class="seg" id="rangeButtons">
+					<button data-range="60">1 min</button>
+					<button data-range="600">10 min</button>
+					<button data-range="3600">1 h</button>
+					<button data-range="0">All</button>
+				</div>
+				<label class="toggle"><input type="checkbox" id="follow" checked> Follow live</label>
+			</div>
+			<div class="chart" id="delayChart"></div>
+			<div class="panel-head" style="margin: 12px 0 4px">
+				<div class="seg" id="metricButtons">
+					<button data-metric="confidence">Confidence</button>
+					<button data-metric="pslr">PSLR</button>
+					<button data-metric="level">Level</button>
+				</div>
+			</div>
+			<div class="chart" id="metricChart"></div>
+			<div class="chart overview" id="overviewChart"></div>
+			<p class="hint">Drag on a chart to zoom, drag on the overview to move through the session, double-click to show everything.
+				Click a moment to inspect it; ← → step through measurements.</p>
+		</section>
+
+		<section class="panel hidden" id="inspectPanel">
+			<div class="panel-head">
+				<h2>Inspect <span class="num" id="inspectTime"></span></h2>
+				<span class="live-badge hidden" id="liveBadge">Live</span>
+				<button class="btn small hidden" id="backToLive">Back to live</button>
+				<div class="spacer"></div>
+				<label class="muted" for="corrRange">Lag</label>
+				<select id="corrRange" style="width:auto">
+					<option value="2">±2 ms</option>
+					<option value="10" selected>±10 ms</option>
+					<option value="50">±50 ms</option>
+					<option value="200">±200 ms</option>
+				</select>
+				<label class="muted" for="waveWindow">Window</label>
+				<select id="waveWindow" style="width:auto">
+					<option value="5" selected>5 ms</option>
+					<option value="20">20 ms</option>
+					<option value="100">100 ms</option>
+					<option value="1000">1 s</option>
+				</select>
+				<label class="toggle" title="Shift each channel by its measured delay"><input type="checkbox" id="alignWaves"> Align by delay</label>
+			</div>
+			<div class="inspect-grid">
+				<div>
+					<h3>Cross-correlation</h3>
+					<div class="chart" id="corrChart"></div>
+				</div>
+				<div>
+					<h3>Waveforms</h3>
+					<div class="chart" id="waveChart"></div>
+					<p class="hint hidden" id="noAudio">No audio recorded for this session; enable “Record input” to see waveforms.</p>
+				</div>
+			</div>
+			<table class="values" id="inspectTable"></table>
+			<p class="form-error hidden" id="inspectError"></p>
+		</section>
+	</main>
+
+	<div class="scrim hidden" id="scrim"></div>
+	<aside class="drawer hidden" id="settingsDrawer" aria-label="Settings">
+		<header><h2>Settings</h2><div class="spacer"></div><button class="btn ghost" id="closeSettings" aria-label="Close">✕</button></header>
+		<div class="body" id="settingsBody"></div>
+		<footer>
+			<button class="btn" id="cancelSettings">Cancel</button>
+			<button class="btn primary" id="saveSettings">Save</button>
+		</footer>
+	</aside>
+
+	<dialog id="signalDialog">
+		<header>Test signal</header>
+		<div class="body" id="signalBody"></div>
+		<footer>
+			<button class="btn" id="closeSignal">Close</button>
+			<a class="btn primary" id="downloadSignal" download>Download WAV</a>
+		</footer>
+	</dialog>
+
+	<script src="vendor/uPlot.iife.min.js"></script>
+	<script type="module" src="js/app.js"></script>
+</body>
+</html>

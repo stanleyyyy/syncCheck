@@ -66,6 +66,44 @@ bool SyncAnalyzer::parseSources(const std::string &sources, unsigned int channel
 	return true;
 }
 
+bool SyncAnalyzer::validate(const SyncAnalyzerSettings &settings, std::string &error)
+{
+	const unsigned int blockSize = settings.m_blockSize;
+	if (blockSize < 256 || (blockSize & (blockSize - 1)) != 0) {
+		error = "block size must be a power of two of at least 256";
+		return false;
+	}
+	if (settings.m_overlapPercent != 50 && settings.m_overlapPercent != 75) {
+		error = "overlap must be 50 or 75 percent";
+		return false;
+	}
+	if (settings.m_interpFactor < 1 || settings.m_interpFactor > 16) {
+		error = "interpolation factor must be between 1 and 16";
+		return false;
+	}
+	if (settings.m_statsRefreshRate <= 0.0f) {
+		error = "update interval must be positive";
+		return false;
+	}
+	if (settings.m_mode == SyncAnalyzerMode::Channels) {
+		if (settings.m_minFreq >= settings.m_maxFreq) {
+			error = "the minimum frequency must be below the maximum frequency";
+			return false;
+		}
+	} else {
+		const unsigned int minBands = settings.m_sources == "mix" ? 2 : SyncCheckConfig::MIN_BANDS;
+		if (settings.m_numBands < minBands || settings.m_numBands > (unsigned int)SyncCheckConfig::MAX_BANDS) {
+			error = "the number of bands must be between " + std::to_string(minBands) + " and " + std::to_string(SyncCheckConfig::MAX_BANDS);
+			return false;
+		}
+		if (settings.m_freqRange / settings.m_numBands <= settings.m_bandSep) {
+			error = "the band separation is larger than the band width";
+			return false;
+		}
+	}
+	return true;
+}
+
 bool SyncAnalyzer::resolveSettings(const SyncAnalyzerSettings &settings, unsigned int channels, unsigned int sampleRate,
 	SyncAnalyzerSettings &resolved, std::string &error)
 {

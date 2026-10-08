@@ -199,6 +199,8 @@ struct SyncAnalyzerSnapshot
 
 /**
  * @brief Captures audio and runs FFTSyncCheck on it.
+ *
+ * Shared by the command line tool and the server.
  */
 class SyncAnalyzer
 {
@@ -230,6 +232,12 @@ public:
 	 * @brief Request run() to return. Safe to call from any thread and from signal handlers.
 	 */
 	void stop() { m_stopRequested = true; }
+
+	/**
+	 * @brief Check settings that do not depend on the input (block size, overlap, bands, ...).
+	 * @return True if valid, otherwise error describes the problem.
+	 */
+	static bool validate(const SyncAnalyzerSettings &settings, std::string &error);
 
 	/**
 	 * @brief Check the settings against an input and translate channel mode into a source mapping.
