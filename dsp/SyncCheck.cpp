@@ -225,23 +225,6 @@ DelayCalculationResult FFTSyncCheck::calculateBandDelayFFT(const std::vector<kis
 	// Compute PSLR (Peak-to-Side-Lobe Ratio).
 	float pslr_db = computePSLR(m_paddedTimeData, padded_size / 64);
 
-	// Store correlation data for this assignment
-	if (m_assignmentCorrelationData.size() <= m_channelAssignments.size()) {
-		m_assignmentCorrelationData.resize(m_channelAssignments.size());
-	}
-
-	// Find assignment index
-	for (std::size_t i = 0; i < m_channelAssignments.size(); i++) {
-		const auto& assign = m_channelAssignments[i];
-		if (assign.refChannel == m_channelAssignments[i].refChannel &&
-			assign.refBand == refBand &&
-			assign.sigChannel == m_channelAssignments[i].sigChannel &&
-			assign.sigBand == sigBand) {
-			m_assignmentCorrelationData[i] = m_paddedTimeData;
-			break;
-		}
-	}
-
 	// Write out the correlation data for debugging if enabled
 	if (m_config.getCorrelationDumpEnabled()) {
 		char filename[256];
@@ -441,6 +424,10 @@ void FFTSyncCheck::processSampleBlock(const std::vector<float>& samples)
 				// Calculate delay and PSLR using the chosen bands
 				auto result = calculateBandDelayFFT(fftDataRef, fftDataSig, assign.refBand, assign.sigBand);
 				m_delayStats[i].update(result);
+
+				// Keep the correlation of this assignment
+				m_assignmentCorrelationData.resize(m_channelAssignments.size());
+				m_assignmentCorrelationData[i] = m_paddedTimeData;
 
 				// Optionally store or use the RMS levels
 				// You may want to add these to DelayStats structure if needed
