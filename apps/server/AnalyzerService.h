@@ -102,7 +102,7 @@ public:
 	/**
 	 * @brief Correlation and waveforms at a moment of the session.
 	 *
-	 * @param time Session time in seconds; ignored when live is set.
+	 * @param time Session time of the middle of the analyzed block in seconds; ignored when live is set.
 	 * @param rangeMs Correlation lag range (+/-) in ms.
 	 * @param windowMs Waveform window in ms.
 	 * @param offsetMs Center of the waveform window relative to the moment in ms.
@@ -225,6 +225,11 @@ private:
 		std::vector<Pair> m_pairs;
 		SyncAnalyzerSnapshot m_latest;
 	};
+
+	/**
+	 * @brief Measurements are stored at the end of their block and shown at its middle, half a block earlier.
+	 */
+	double halfBlockLocked() const;
 
 	void onSnapshot(const SyncAnalyzerSnapshot &snapshot);
 	void setStatus(const std::string &status, bool running);

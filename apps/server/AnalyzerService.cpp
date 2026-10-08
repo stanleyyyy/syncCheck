@@ -422,6 +422,11 @@ json AnalyzerService::state() const
 	return stateLocked();
 }
 
+double AnalyzerService::halfBlockLocked() const
+{
+	return m_session.m_sampleRate ? m_session.m_settings.m_blockSize / 2.0 / m_session.m_sampleRate : 0.0;
+}
+
 json AnalyzerService::measurementsLocked(std::size_t from) const
 {
 	const Session &session = m_session;
@@ -429,8 +434,9 @@ json AnalyzerService::measurementsLocked(std::size_t from) const
 
 	json result = { { "session", session.m_id }, { "from", from } };
 	json times = json::array();
+	const double half = halfBlockLocked();
 	for (std::size_t i = from; i < session.m_time.size(); i++) {
-		times.push_back(std::round(session.m_time[i] * 1000.0) / 1000.0);
+		times.push_back(std::round((session.m_time[i] - half) * 1000.0) / 1000.0);
 	}
 	result["t"] = std::move(times);
 
@@ -498,7 +504,7 @@ bool AnalyzerService::inspect(double time, double rangeMs, double windowMs, doub
 		// An opened session has no live measurement; use its last moment.
 		if (live && !m_session.m_latest.m_sequence && !audio.empty() && !m_session.m_time.empty()) {
 			live = false;
-			time = m_session.m_time.back();
+			time = m_session.m_time.back() - halfBlockLocked();
 		}
 		if (live || audio.empty()) {
 			if (!m_session.m_latest.m_sequence) {
@@ -520,7 +526,7 @@ bool AnalyzerService::inspect(double time, double rangeMs, double windowMs, doub
 			return false;
 		}
 		const unsigned int sampleRate = reader.getSampleRate();
-		uint64_t endFrame = static_cast<uint64_t>(std::llround(std::max(0.0, time) * sampleRate));
+		uint64_t endFrame = static_cast<uint64_t>(std::llround(std::max(0.0, time) * sampleRate)) + settings.m_blockSize / 2;
 		endFrame = std::clamp<uint64_t>(endFrame, settings.m_blockSize, std::max<uint64_t>(available, settings.m_blockSize));
 		if (!SyncAnalyzer::analyzeBlock(audio, settings, endFrame, snapshot, error)) {
 			return false;
@@ -528,7 +534,7 @@ bool AnalyzerService::inspect(double time, double rangeMs, double windowMs, doub
 	}
 
 	const unsigned int sampleRate = snapshot.m_sampleRate;
-	const double time0 = double(snapshot.m_frames) / sampleRate;
+	const double time0 = (double(snapshot.m_frames) - settings.m_blockSize / 2.0) / sampleRate;
 	result = { { "time", time0 }, { "live", live }, { "sampleRate", sampleRate } };
 
 	// Correlations on a common lag grid in ms, normalized to the peak; each grid point

@@ -11,7 +11,7 @@ const FONT = '12px system-ui, -apple-system, "Segoe UI", sans-serif';
 const HEIGHT = { value: 190 };
 const OVERVIEW_HEIGHT = 60;
 const DEFAULT_CORR = { min: -10, max: 10 };
-// Waveform view widths in s; the default shows the end of the analyzed block.
+// Waveform view widths in s; the default shows the middle of the analyzed block.
 const DEFAULT_WAVE_WIDTH = 0.005;
 const MIN_WAVE_WIDTH = 0.0002;
 const MAX_WAVE_WIDTH = 30;
@@ -77,7 +77,7 @@ export class Inspector {
 	}
 
 	resetWaveState() {
-		this.cursor = null;		// inspected moment (s), the end of the analyzed block
+		this.cursor = null;		// inspected moment (s), the middle of the analyzed block
 		this.waveView = null;	// visible session time range (s)
 		this.followLive = true;	// the view stays at the latest moment while live
 		this.waveData = null;
@@ -152,10 +152,10 @@ export class Inspector {
 		this.result = result;
 		this.cursor = result.time;
 		if (!this.waveView) {
-			this.waveView = { min: this.cursor - DEFAULT_WAVE_WIDTH, max: this.cursor };
+			this.waveView = { min: this.cursor - DEFAULT_WAVE_WIDTH / 2, max: this.cursor + DEFAULT_WAVE_WIDTH / 2 };
 		} else if (result.live && this.followLive) {
 			const width = this.waveView.max - this.waveView.min;
-			this.waveView = { min: this.cursor - width, max: this.cursor };
+			this.waveView = { min: this.cursor - width / 2, max: this.cursor + width / 2 };
 		} else {
 			this.revealCursor(false);
 		}
@@ -227,11 +227,11 @@ export class Inspector {
 		this.setCorrView(DEFAULT_CORR);
 	}
 
-	// The end of the analyzed block, at the cursor.
+	// The middle of the analyzed block, at the cursor.
 	resetWaveform() {
 		if (this.cursor === null) return;
 		this.followLive = true;
-		this.setWaveView({ min: this.cursor - DEFAULT_WAVE_WIDTH, max: this.cursor });
+		this.setWaveView({ min: this.cursor - DEFAULT_WAVE_WIDTH / 2, max: this.cursor + DEFAULT_WAVE_WIDTH / 2 });
 	}
 
 	// Fit the correlation view to the measured delays.
@@ -457,11 +457,12 @@ export class Inspector {
 		this.updateOverview();
 	}
 
-	// The analyzed block (it ends at the cursor), shaded.
+	// The analyzed block (centered on the cursor), shaded.
 	drawBlock(u, colors) {
 		if (this.cursor === null || !this.result || !this.result.blockMs) return;
-		const left = Math.max(u.bbox.left, u.valToPos(this.cursor - this.result.blockMs / 1000, 'x', true));
-		const right = Math.min(u.bbox.left + u.bbox.width, u.valToPos(this.cursor, 'x', true));
+		const half = this.result.blockMs / 2000;
+		const left = Math.max(u.bbox.left, u.valToPos(this.cursor - half, 'x', true));
+		const right = Math.min(u.bbox.left + u.bbox.width, u.valToPos(this.cursor + half, 'x', true));
 		if (right <= left) return;
 		const ctx = u.ctx;
 		ctx.save();
