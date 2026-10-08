@@ -64,7 +64,7 @@ struct SyncAnalyzerSettings
 	/**
 	 * @brief FFT block size.
 	 */
-	unsigned int m_blockSize = SyncCheckConfig::DEFAULT_BLOCK_SIZE;
+	unsigned int m_blockSize = 32768;
 
 	/**
 	 * @brief Overlap percent.
@@ -79,17 +79,17 @@ struct SyncAnalyzerSettings
 	/**
 	 * @brief Interpolation factor for spectral analysis.
 	 */
-	unsigned int m_interpFactor = SyncCheckConfig::DEFAULT_INTERP_FACTOR;
+	unsigned int m_interpFactor = 1;
 
 	/**
 	 * @brief Start frequency of processing bands in Hz.
 	 */
-	unsigned int m_startFreq = 16000;
+	unsigned int m_startFreq = 0;
 
 	/**
 	 * @brief Frequency range of processing bands in Hz.
 	 */
-	unsigned int m_freqRange = 8000;
+	unsigned int m_freqRange = 6000;
 
 	/**
 	 * @brief Band separation of processing bands in Hz.
@@ -144,8 +144,8 @@ struct SyncAnalyzerSettings
 	/**
 	 * @brief Channel mode: analyzed frequency range in Hz.
 	 */
-	unsigned int m_minFreq = 200;
-	unsigned int m_maxFreq = 20000;
+	unsigned int m_minFreq = 0;
+	unsigned int m_maxFreq = 6000;
 
 	/**
 	 * @brief Record the captured audio to this 16-bit WAV file, readable while recording. Empty disables it.

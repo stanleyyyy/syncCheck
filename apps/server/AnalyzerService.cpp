@@ -49,7 +49,6 @@ ServerSettings::ServerSettings()
 {
 	// The web UI prefers comparing native channels.
 	m_analyzer.m_mode = SyncAnalyzerMode::Channels;
-	m_analyzer.m_blockSize = 16384;
 	m_analyzer.m_statsRefreshRate = 0.25f;
 	m_analyzer.m_realtimeFile = true;
 }
