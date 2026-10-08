@@ -277,6 +277,9 @@ int main(int argc, char *argv[])
 	{
 		httplib::Client probe(clientHost, port);
 		probe.set_connection_timeout(1);
+		// A stopped instance accepts the connection but never answers.
+		probe.set_read_timeout(2);
+		probe.set_write_timeout(2);
 		const auto res = probe.Get("/api/state");
 		if (res && res->status == 200 && res->body.find("\"settings\"") != std::string::npos) {
 			DBG_INFO("Sync analyzer is already running at " << url);
@@ -568,8 +571,16 @@ int main(int argc, char *argv[])
 	signal(SIGINT, signalHandler);
 	signal(SIGTERM, signalHandler);
 
+#ifndef _WIN32
+	// Only one server per port: the default SO_REUSEPORT lets a second instance listen too, and the
+	// kernel then hands requests to either one (also to a stopped one, which never answers).
+	server.set_socket_options([](socket_t sock) {
+		int opt = 1;
+		setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const void *>(&opt), sizeof(opt));
+	});
+#endif
 	if (!server.bind_to_port(host, port)) {
-		DBG_ERROR("Cannot listen on " << host << ":" << port);
+		DBG_ERROR("Cannot listen on " << host << ":" << port << "; is another sync_analyzer_server running (or stopped with Ctrl+Z)?");
 		return 1;
 	}
 
