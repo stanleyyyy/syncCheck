@@ -327,17 +327,44 @@ function startPlayback() {
 	const params = new URLSearchParams({ from: from.toFixed(3), to: to.toFixed(3), channels: $('listen').value });
 	const audio = new Audio(`api/audio.wav?${params}`);
 	app.audio = audio;
-	$('playButton').textContent = '■ Stop';
-	const tick = () => {
+	// Until the audio plays; Stop cancels.
+	$('playButton').dataset.state = 'loading';
+	timeline.setPlayhead(from);
+	inspector.setPlayhead(from);
+	// The browser reports playing even when it cannot open an audio output; then its clock stands still.
+	let lastTime = -1, lastChange = 0;
+	const tick = (now) => {
 		if (app.audio !== audio) return;
+		if (audio.currentTime !== lastTime) {
+			lastTime = audio.currentTime;
+			lastChange = now;
+		} else if (!audio.paused && audio.readyState >= 3 && now - lastChange > 3000) {
+			showError('The browser does not play the audio; check its sound output');
+			stopPlayback();
+			return;
+		}
 		timeline.setPlayhead(from + audio.currentTime);
 		inspector.setPlayhead(from + audio.currentTime);
 		requestAnimationFrame(tick);
 	};
-	audio.addEventListener('playing', () => requestAnimationFrame(tick));
+	audio.addEventListener('playing', () => {
+		if (app.audio === audio) $('playButton').dataset.state = 'stop';
+		requestAnimationFrame(tick);
+	}, { once: true });
+	// Enough audio is loaded but it does not start: the browser's sound output does not run.
+	audio.addEventListener('canplay', () => setTimeout(() => {
+		if (app.audio !== audio || audio.currentTime > 0) return;
+		showError('The browser does not play the audio; check its sound output');
+		stopPlayback();
+	}, 4000), { once: true });
 	audio.addEventListener('ended', stopPlayback);
 	audio.addEventListener('error', () => { showError('Cannot play the session audio'); stopPlayback(); });
-	audio.play().catch(() => stopPlayback());
+	audio.play().catch((e) => {
+		// Stopped before it started playing.
+		if (app.audio !== audio) return;
+		showError(`Cannot play the session audio: ${e.message}`);
+		stopPlayback();
+	});
 }
 
 function stopPlayback() {
@@ -345,7 +372,7 @@ function stopPlayback() {
 		app.audio.pause();
 		app.audio = null;
 	}
-	$('playButton').textContent = '▶ Play';
+	$('playButton').dataset.state = 'play';
 	timeline.setPlayhead(null);
 	inspector.setPlayhead(null);
 }

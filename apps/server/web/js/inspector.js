@@ -485,10 +485,11 @@ export class Inspector {
 		u.ctx.restore();
 	}
 
-	// Playback position; the view pages along to keep it visible.
+	// Playback position; views of at least a second page along to keep it visible (narrower ones would only flicker).
 	setPlayhead(time) {
 		this.playhead = time;
-		if (time !== null && this.waveView && (time < this.waveView.min || time > this.waveView.max)) {
+		if (time !== null && this.waveView && this.waveView.max - this.waveView.min >= 1
+			&& (time < this.waveView.min || time > this.waveView.max)) {
 			const width = this.waveView.max - this.waveView.min;
 			this.moveWaveView({ min: time, max: time + width }, false);
 			this.refreshWhileDragging(() => this.fetchWave());

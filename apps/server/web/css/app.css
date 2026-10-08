@@ -138,6 +138,12 @@ button, input, select { font: inherit; color: inherit; }
 .btn.ghost:hover { background: var(--hover); }
 .btn:disabled { opacity: 0.5; cursor: default; }
 .btn.small { height: 26px; padding: 0 10px; font-size: 13px; }
+/* All labels share one cell, so the button is as wide as the widest one whichever is shown. */
+#playButton { display: inline-grid; justify-items: center; }
+#playButton > span { grid-area: 1 / 1; visibility: hidden; }
+#playButton[data-state="play"] > [data-label="play"],
+#playButton[data-state="loading"] > [data-label="loading"],
+#playButton[data-state="stop"] > [data-label="stop"] { visibility: visible; }
 
 .menu { position: relative; }
 .menu-list {
