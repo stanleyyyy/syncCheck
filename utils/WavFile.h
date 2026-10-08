@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdio>
 #include <memory>
 #include <string>
 
@@ -63,6 +64,12 @@ public:
 	 */
 	std::size_t readFrames(float* data, std::size_t frames);
 
+	/**
+	 * @brief Move the read position to the given frame.
+	 * @return True on success.
+	 */
+	bool seek(std::size_t frame);
+
 	bool isOpen() const;
 	unsigned int getChannels() const;
 	unsigned int getSampleRate() const;
@@ -77,4 +84,34 @@ public:
 private:
 	struct Impl;
 	std::unique_ptr<Impl> m_impl;
+};
+
+/**
+ * @brief Records interleaved samples to a 16-bit PCM WAV file.
+ *
+ * The header is refreshed regularly, so the file is a valid WAV file that can be read
+ * (e.g. with WavReader) while the recording is still in progress.
+ */
+class WavRecorder
+{
+public:
+	WavRecorder() = default;
+	~WavRecorder();
+
+	WavRecorder(const WavRecorder&) = delete;
+	WavRecorder& operator=(const WavRecorder&) = delete;
+
+	bool open(const std::string& path, unsigned int channels, unsigned int sampleRate);
+	void writeFrames(const float* data, std::size_t frames);
+	bool isOpen() const { return m_file != nullptr; }
+	void close();
+
+private:
+	void updateHeader();
+
+	std::FILE* m_file = nullptr;
+	unsigned int m_channels = 0;
+	unsigned int m_sampleRate = 0;
+	std::size_t m_framesWritten = 0;
+	std::size_t m_framesSinceUpdate = 0;
 };
