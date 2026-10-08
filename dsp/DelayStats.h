@@ -72,6 +72,8 @@ struct DelayStats {
 	DelayStats()
 		: m_filteredDelay(0.0f)
 		, m_filteredPSLR(0.0f)
+		, m_filteredRefRMS(0.0f)
+		, m_filteredSigRMS(0.0f)
 		, m_confidence(0.0f)
 	{
 		m_history.reserve(HISTORY_SIZE);
