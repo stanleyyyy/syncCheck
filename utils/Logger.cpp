@@ -5,8 +5,26 @@
 #include <chrono>
 #include <iomanip>
 #include <sstream>
+#include <thread>
+
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#include <process.h>
+static unsigned long currentProcessId() { return static_cast<unsigned long>(_getpid()); }
+static unsigned long currentThreadId() { return static_cast<unsigned long>(GetCurrentThreadId()); }
+#elif defined(__linux__)
 #include <unistd.h>
 #include <sys/syscall.h>
+static unsigned long currentProcessId() { return static_cast<unsigned long>(getpid()); }
+static unsigned long currentThreadId() { return static_cast<unsigned long>(syscall(SYS_gettid)); }
+#else
+#include <unistd.h>
+#include <functional>
+static unsigned long currentProcessId() { return static_cast<unsigned long>(getpid()); }
+static unsigned long currentThreadId() { return static_cast<unsigned long>(std::hash<std::thread::id>()(std::this_thread::get_id())); }
+#endif
 
 #include "Logger.h"
 #include <iostream>
@@ -52,7 +70,7 @@ void Logger::logMessage(LogLevel level, const std::string& message, bool inlineM
 	std::ostringstream timeStr;
 	timeStr << std::put_time(std::localtime(&time), "%Y%m%d %H:%M:%S")
 		<< "." << std::setfill('0') << std::setw(3) << ms.count()
-		<< " [" << getpid() << "." << syscall(SYS_gettid) << "] ";
+		<< " [" << currentProcessId() << "." << currentThreadId() << "] ";
 
 	// Truncate message if it exceeds maximum length
 	std::string truncatedMessage = message;
