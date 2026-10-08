@@ -28,6 +28,8 @@ export const api = {
 	stop: () => request('POST', 'api/stop'),
 	fileInfo: (path) => request('GET', `api/fileinfo?path=${encodeURIComponent(path)}`),
 	inspect: (params) => request('GET', `api/inspect?${new URLSearchParams(params)}`),
+	waveform: (params) => request('GET', `api/waveform?${new URLSearchParams(params)}`),
+	overview: (params) => request('GET', `api/overview?${new URLSearchParams(params)}`),
 	async upload(file) {
 		const form = new FormData();
 		form.append('file', file);

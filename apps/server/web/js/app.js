@@ -33,6 +33,9 @@ const inspector = new Inspector({
 	corrReadout: $('corrReadout'), waveReadout: $('waveReadout'),
 	// immediate: while dragging (already throttled by the inspector)
 	onViewChange: (immediate) => (immediate ? inspect() : scheduleInspect(150, true)),
+	// A click on the waveform inspects that moment.
+	onSelect: (time) => { revealInTimeline(time); select(time); },
+	levels: () => app.store,
 });
 const settingsDrawer = new SettingsDrawer({ drawer: $('settingsDrawer'), scrim: $('scrim'), body: $('settingsBody'),
 	onSaved: (settings) => { app.state.settings = settings; renderHeader(); } });
@@ -249,6 +252,7 @@ function onMeasurements(batch) {
 		for (const key of Object.keys(target)) target[key].push(...p[key]);
 	});
 	timeline.setData(store);
+	inspector.sessionGrew();
 	updateCards();
 	updateElapsed();
 	renderHeader();
@@ -293,19 +297,22 @@ async function inspect() {
 	}
 }
 
-function select(time) {
+function showSelection(time) {
 	app.selection = time;
 	timeline.setSelection(time);
 	updateInspectorHeader();
 	updateCards();
+}
+
+function select(time) {
+	showSelection(time);
+	inspector.setMoment(time);
 	inspect();
 }
 
 function backToLive() {
-	app.selection = null;
-	timeline.setSelection(null);
-	updateInspectorHeader();
-	updateCards();
+	showSelection(null);
+	inspector.setMoment(null);
 	inspect();
 }
 
@@ -341,6 +348,15 @@ function stopPlayback() {
 	timeline.setPlayhead(null);
 }
 
+// Keep a selected moment in view.
+function revealInTimeline(time) {
+	const range = timeline.currentRange();
+	if (time < range.min || time > range.max) {
+		const width = range.max - range.min;
+		timeline.setXRange(time - width / 2, time + width / 2);
+	}
+}
+
 // Keyboard: ← → step, Shift for 10 steps, + − zoom, Home/End, Space play, Esc back to live.
 document.addEventListener('keydown', (e) => {
 	if (e.target.closest('input, select, textarea, dialog') || !app.store.t.length) return;
@@ -364,12 +380,7 @@ document.addEventListener('keydown', (e) => {
 		const step = (e.key === 'ArrowLeft' ? -1 : 1) * (e.shiftKey ? 10 : 1);
 		const current = app.selection === null ? t.length - 1 : nearestIndex(app.selection);
 		const time = t[Math.max(0, Math.min(t.length - 1, current + step))];
-		// Keep the selection in view.
-		const range = timeline.currentRange();
-		if (time < range.min || time > range.max) {
-			const width = range.max - range.min;
-			timeline.setXRange(time - width / 2, time + width / 2);
-		}
+		revealInTimeline(time);
 		select(time);
 	} else {
 		return;

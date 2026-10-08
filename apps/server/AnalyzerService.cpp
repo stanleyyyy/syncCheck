@@ -44,6 +44,49 @@ json assignmentJson(const FFTSyncCheck::ChannelAssignment &assignment)
 		{ "sig", assignment.sigChannel }, { "sigBand", assignment.sigBand } };
 }
 
+// Min/max envelope of every channel over the frames first..last, in at most maxPoints buckets.
+// Channel ch is read shift[ch] frames later; samples outside the file stay silent.
+json readEnvelope(WavReader &reader, uint64_t available, long first, long last, const std::vector<long> &shift,
+	std::size_t maxPoints, double &framesPerBucket)
+{
+	const unsigned int channels = reader.getChannels();
+	const long minShift = std::min(0L, *std::min_element(shift.begin(), shift.end()));
+	const long maxShift = std::max(0L, *std::max_element(shift.begin(), shift.end()));
+	// Read the range covering all shifts.
+	const long readFrom = first + minShift;
+	const long readTo = last + maxShift;
+	const long clampedFrom = std::clamp(readFrom, 0L, long(available));
+	const long clampedTo = std::clamp(readTo, 0L, long(available));
+	std::vector<float> samples(std::size_t(readTo - readFrom) * channels, 0.0f);
+	if (clampedTo > clampedFrom && reader.seek(std::size_t(clampedFrom))) {
+		reader.readFrames(samples.data() + std::size_t(clampedFrom - readFrom) * channels, std::size_t(clampedTo - clampedFrom));
+	}
+	const std::size_t frames = std::size_t(last - first);
+	const std::size_t buckets = std::min(frames, maxPoints);
+	framesPerBucket = double(frames) / buckets;
+
+	json traces = json::array();
+	for (unsigned int ch = 0; ch < channels; ch++) {
+		const long base = first + shift[ch] - readFrom;
+		json mins = json::array(), maxs = json::array();
+		for (std::size_t b = 0; b < buckets; b++) {
+			const std::size_t i0 = std::size_t(b * framesPerBucket);
+			const std::size_t i1 = std::max(i0 + 1, std::size_t((b + 1) * framesPerBucket));
+			float lo = 1.0f, hi = -1.0f;
+			for (std::size_t i = i0; i < i1 && i < frames; i++) {
+				const float sample = samples[(std::size_t(base) + i) * channels + ch];
+				lo = std::min(lo, sample);
+				hi = std::max(hi, sample);
+			}
+			// Full sample precision; quiet signals would turn into steps otherwise.
+			mins.push_back(std::round(double(lo) * 1e7) / 1e7);
+			maxs.push_back(std::round(double(hi) * 1e7) / 1e7);
+		}
+		traces.push_back({ { "channel", ch }, { "min", std::move(mins) }, { "max", std::move(maxs) } });
+	}
+	return traces;
+}
+
 } // namespace
 
 ServerSettings::ServerSettings()
@@ -543,8 +586,7 @@ bool AnalyzerService::inspect(double time, double rangeMs, double windowMs, doub
 				}
 			}
 		}
-		const long minShift = std::min(0L, *std::min_element(shift.begin(), shift.end()));
-		const long maxShift = std::max(0L, *std::max_element(shift.begin(), shift.end()));
+		const std::vector<long> noShift(channels, 0);
 
 		auto envelope = [&](double fromMs, double toMs, std::size_t maxPoints, bool shifted) -> json {
 			const long first = std::lround(double(moment) + fromMs / 1000.0 * sampleRate);
@@ -552,38 +594,8 @@ bool AnalyzerService::inspect(double time, double rangeMs, double windowMs, doub
 			if (last <= first) {
 				return nullptr;
 			}
-			// Read the range covering all shifts; samples outside the file stay silent.
-			const long readFrom = first + (shifted ? minShift : 0);
-			const long readTo = last + (shifted ? maxShift : 0);
-			const long clampedFrom = std::clamp(readFrom, 0L, long(available));
-			const long clampedTo = std::clamp(readTo, 0L, long(available));
-			std::vector<float> samples(std::size_t(readTo - readFrom) * channels, 0.0f);
-			if (clampedTo > clampedFrom && reader.seek(std::size_t(clampedFrom))) {
-				reader.readFrames(samples.data() + std::size_t(clampedFrom - readFrom) * channels, std::size_t(clampedTo - clampedFrom));
-			}
-			const std::size_t frames = std::size_t(last - first);
-			const std::size_t buckets = std::min(frames, maxPoints);
-			const double framesPerBucket = double(frames) / buckets;
-
-			json traces = json::array();
-			for (unsigned int ch = 0; ch < channels; ch++) {
-				const long base = first + (shifted ? shift[ch] : 0) - readFrom;
-				json mins = json::array(), maxs = json::array();
-				for (std::size_t b = 0; b < buckets; b++) {
-					const std::size_t i0 = std::size_t(b * framesPerBucket);
-					const std::size_t i1 = std::max(i0 + 1, std::size_t((b + 1) * framesPerBucket));
-					float lo = 1.0f, hi = -1.0f;
-					for (std::size_t i = i0; i < i1 && i < frames; i++) {
-						const float sample = samples[(std::size_t(base) + i) * channels + ch];
-						lo = std::min(lo, sample);
-						hi = std::max(hi, sample);
-					}
-					// Full sample precision; quiet signals would turn into steps otherwise.
-					mins.push_back(std::round(double(lo) * 1e7) / 1e7);
-					maxs.push_back(std::round(double(hi) * 1e7) / 1e7);
-				}
-				traces.push_back({ { "channel", ch }, { "min", std::move(mins) }, { "max", std::move(maxs) } });
-			}
+			double framesPerBucket = 1.0;
+			json traces = readEnvelope(reader, available, first, last, shifted ? shift : noShift, maxPoints, framesPerBucket);
 			return {
 				{ "startMs", (double(first) - double(moment)) * 1000.0 / sampleRate },
 				{ "stepMs", framesPerBucket * 1000.0 / sampleRate },
@@ -602,6 +614,113 @@ bool AnalyzerService::inspect(double time, double rangeMs, double windowMs, doub
 			result["blockMs"] = blockMs;
 		}
 	}
+	return true;
+}
+
+bool AnalyzerService::waveform(double from, double to, const std::map<unsigned int, double> &delaysMs, json &result,
+	std::string &error) const
+{
+	std::string audio;
+	{
+		std::lock_guard<std::mutex> lock(m_mutex);
+		audio = m_session.m_audio;
+	}
+	WavReader reader;
+	if (audio.empty() || !reader.open(audio)) {
+		error = "no session audio";
+		return false;
+	}
+	const unsigned int sampleRate = reader.getSampleRate();
+	const unsigned int channels = reader.getChannels();
+	const uint64_t available = reader.getLengthInFrames();
+	result = { { "duration", double(available) / sampleRate }, { "sampleRate", sampleRate } };
+
+	// Align: a compared channel is read later by its delay, so its audio lines up with the reference.
+	std::vector<long> shift(channels, 0);
+	for (const auto &[channel, delay] : delaysMs) {
+		if (channel < channels) {
+			shift[channel] = std::lround(delay / 1000.0 * sampleRate);
+		}
+	}
+	const long first = std::lround(from * sampleRate);
+	const long last = std::lround(to * sampleRate);
+	if (last > first) {
+		double framesPerBucket = 1.0;
+		result["channels"] = readEnvelope(reader, available, first, last, shift, MAX_TRACE_POINTS, framesPerBucket);
+		result["start"] = double(first) / sampleRate;
+		result["step"] = framesPerBucket / sampleRate;
+	}
+	return true;
+}
+
+bool AnalyzerService::overview(std::size_t points, json &result, std::string &error) const
+{
+	constexpr uint64_t BUCKET_FRAMES = 1024;
+	std::string audio;
+	{
+		std::lock_guard<std::mutex> lock(m_mutex);
+		audio = m_session.m_audio;
+	}
+	WavReader reader;
+	if (audio.empty() || !reader.open(audio)) {
+		error = "no session audio";
+		return false;
+	}
+	const unsigned int channels = reader.getChannels();
+	const uint64_t available = reader.getLengthInFrames();
+
+	std::lock_guard<std::mutex> lock(m_overviewMutex);
+	OverviewCache &cache = m_overview;
+	if (cache.m_audio != audio || cache.m_channels != channels || cache.m_frames > available) {
+		cache = OverviewCache();
+		cache.m_audio = audio;
+		cache.m_channels = channels;
+		cache.m_sampleRate = reader.getSampleRate();
+	}
+	// Add the buckets of the audio written since the last call.
+	const uint64_t frames = available / BUCKET_FRAMES * BUCKET_FRAMES;
+	if (frames > cache.m_frames && reader.seek(std::size_t(cache.m_frames))) {
+		std::vector<float> samples(BUCKET_FRAMES * channels);
+		for (uint64_t at = cache.m_frames; at < frames; at += BUCKET_FRAMES) {
+			if (reader.readFrames(samples.data(), BUCKET_FRAMES) < BUCKET_FRAMES) {
+				break;
+			}
+			for (unsigned int ch = 0; ch < channels; ch++) {
+				float lo = 1.0f, hi = -1.0f;
+				for (uint64_t i = 0; i < BUCKET_FRAMES; i++) {
+					lo = std::min(lo, samples[i * channels + ch]);
+					hi = std::max(hi, samples[i * channels + ch]);
+				}
+				cache.m_min.push_back(lo);
+				cache.m_max.push_back(hi);
+			}
+			cache.m_frames = at + BUCKET_FRAMES;
+		}
+	}
+
+	// Merge the cached buckets into at most points buckets.
+	const std::size_t cached = std::size_t(cache.m_frames / BUCKET_FRAMES);
+	const std::size_t buckets = std::min(cached, std::max<std::size_t>(points, 1));
+	const double perBucket = buckets ? double(cached) / buckets : 1.0;
+	json traces = json::array();
+	for (unsigned int ch = 0; ch < channels; ch++) {
+		json mins = json::array(), maxs = json::array();
+		for (std::size_t b = 0; b < buckets; b++) {
+			const std::size_t i0 = std::size_t(b * perBucket);
+			const std::size_t i1 = std::max(i0 + 1, std::size_t((b + 1) * perBucket));
+			float lo = 1.0f, hi = -1.0f;
+			for (std::size_t i = i0; i < i1 && i < cached; i++) {
+				lo = std::min(lo, cache.m_min[i * channels + ch]);
+				hi = std::max(hi, cache.m_max[i * channels + ch]);
+			}
+			mins.push_back(std::round(double(lo) * 1e5) / 1e5);
+			maxs.push_back(std::round(double(hi) * 1e5) / 1e5);
+		}
+		traces.push_back({ { "channel", ch }, { "min", std::move(mins) }, { "max", std::move(maxs) } });
+	}
+	const unsigned int sampleRate = cache.m_sampleRate;
+	result = { { "duration", double(available) / sampleRate }, { "sampleRate", sampleRate }, { "start", 0.0 },
+		{ "step", perBucket * BUCKET_FRAMES / sampleRate }, { "channels", std::move(traces) } };
 	return true;
 }
 

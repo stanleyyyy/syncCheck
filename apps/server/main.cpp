@@ -438,6 +438,37 @@ int main(int argc, char *argv[])
 		sendJson(res, result);
 	});
 
+	// delays: "channel:ms,..." to align channels with the reference.
+	server.Get("/api/waveform", [&](const httplib::Request &req, httplib::Response &res) {
+		const double from = queryNumber(req, "from", 0);
+		const double to = std::clamp(queryNumber(req, "to", 0), from, from + 120.0);
+		std::map<unsigned int, double> delays;
+		std::istringstream list(req.get_param_value("delays"));
+		std::string item;
+		while (std::getline(list, item, ',')) {
+			const auto colon = item.find(':');
+			if (colon != std::string::npos) {
+				delays[unsigned(std::stoul(item.substr(0, colon)))] = std::stod(item.substr(colon + 1));
+			}
+		}
+		json result;
+		std::string error;
+		if (!service.waveform(from, to, delays, result, error)) {
+			sendError(res, error, 404);
+			return;
+		}
+		sendJson(res, result);
+	});
+
+	server.Get("/api/overview", [&](const httplib::Request &req, httplib::Response &res) {
+		json result;
+		std::string error;
+		if (!service.overview(std::size_t(std::clamp(queryNumber(req, "points", 600), 1.0, 5000.0)), result, error)) {
+			sendError(res, error, 404);
+			return;
+		}
+		sendJson(res, result);
+	});
 
 	server.Get("/api/fileinfo", [&](const httplib::Request &req, httplib::Response &res) {
 		const json info = fileInfo(req.get_param_value("path"));

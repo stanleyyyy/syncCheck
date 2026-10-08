@@ -1,5 +1,7 @@
-// Inspector: correlation and waveforms at one moment of the session.
-// Charts zoom with the mouse wheel and move by dragging; data for the new view is fetched when the gesture ends.
+// Inspector: correlation at one moment of the session (the cursor) and the waveforms of the whole recording.
+// Charts zoom with Ctrl+wheel and move by dragging; data for the new view is fetched while doing so.
+// The waveform view moves freely through the recording; clicking it puts the cursor (the inspected moment) there.
+import { api } from './api.js';
 import { chartColors, seriesColor } from './theme.js';
 import { formatMs, el } from './format.js';
 import { bindGestures } from './gestures.js';
@@ -9,8 +11,10 @@ const FONT = '12px system-ui, -apple-system, "Segoe UI", sans-serif';
 const HEIGHT = { value: 190 };
 const OVERVIEW_HEIGHT = 60;
 const DEFAULT_CORR = { min: -10, max: 10 };
-// The moment is the end of the analyzed block, so the waveform view ends there.
-const DEFAULT_WAVE = { min: -5, max: 0 };
+// Waveform view widths in s; the default shows the end of the analyzed block.
+const DEFAULT_WAVE_WIDTH = 0.005;
+const MIN_WAVE_WIDTH = 0.0002;
+const MAX_WAVE_WIDTH = 30;
 
 // Both charts share the height the window has left.
 function fitHeight() {
@@ -32,8 +36,19 @@ function axes(colors, xLabel, yLabel) {
 	];
 }
 
+function verticalLine(u, x, color, dash) {
+	const ctx = u.ctx;
+	ctx.strokeStyle = color;
+	ctx.lineWidth = devicePixelRatio;
+	ctx.setLineDash(dash ? [3 * devicePixelRatio, 3 * devicePixelRatio] : []);
+	ctx.beginPath();
+	ctx.moveTo(x, u.bbox.top);
+	ctx.lineTo(x, u.bbox.top + u.bbox.height);
+	ctx.stroke();
+}
+
 export class Inspector {
-	constructor({ corrEl, waveEl, overviewEl, keysEl, tableEl, noAudioEl, corrReadout, waveReadout, onViewChange }) {
+	constructor({ corrEl, waveEl, overviewEl, keysEl, tableEl, noAudioEl, corrReadout, waveReadout, onViewChange, onSelect, levels }) {
 		this.corrEl = corrEl;
 		this.waveEl = waveEl;
 		this.overviewEl = overviewEl;
@@ -43,12 +58,14 @@ export class Inspector {
 		this.corrReadout = corrReadout;
 		this.waveReadout = waveReadout;
 		this.onViewChange = onViewChange;
+		this.onSelect = onSelect;
+		this.levels = levels;
 		this.result = null;
 		this.labels = [];
 		this.align = false;
 		this.maxLag = 340;
 		this.corrView = { ...DEFAULT_CORR };
-		this.waveView = { ...DEFAULT_WAVE };
+		this.resetWaveState();
 		this.frozenWaveY = null;
 		this.wheelTimer = null;
 		this.corr = this.wave = this.overview = null;
@@ -59,9 +76,21 @@ export class Inspector {
 		this.updateReadouts();
 	}
 
+	resetWaveState() {
+		this.cursor = null;		// inspected moment (s), the end of the analyzed block
+		this.waveView = null;	// visible session time range (s)
+		this.followLive = true;	// the view stays at the latest moment while live
+		this.waveData = null;
+		this.duration = 0;
+		this.waveSeq = this.waveRendered = 0;
+		this.waveDelays = '';
+		this.overviewData = null;
+	}
+
 	setPairs(labels, maxLagMs) {
 		this.labels = labels;
 		this.maxLag = maxLagMs || this.maxLag;
+		this.resetWaveState();
 		this.clear();
 		// Rows in place before the first data, so the panel does not grow later.
 		this.renderTable({ pairs: labels.map(() => ({ delay: NaN, pslr: NaN })) });
@@ -75,25 +104,28 @@ export class Inspector {
 		this.overviewEl.style.minHeight = `${OVERVIEW_HEIGHT + 5}px`;
 	}
 
-	// Parameters for /api/inspect: the visible ranges plus a margin on both sides, so dragging shows data right away.
+	// Parameters for /api/inspect: the visible lag range plus a margin on both sides, so dragging shows data right away.
 	params() {
 		const c = this.corrView;
 		const range = Math.max(Math.abs(c.min), Math.abs(c.max)) + (c.max - c.min);
-		const w = this.waveView;
-		return { range: Math.min(range, this.maxLag).toFixed(3), window: (3 * (w.max - w.min)).toFixed(3), offset: ((w.min + w.max) / 2).toFixed(3),
-			align: this.align ? 1 : 0 };
+		return { range: Math.min(range, this.maxLag).toFixed(3), window: 0.5 };
 	}
 
-	// While dragging, fetch new data every ~80 ms so the charts follow the mouse.
-	fetchWhileDragging() {
-		if (this.dragTimer) return;
-		this.dragTimer = setTimeout(() => { this.dragTimer = null; this.onViewChange(true); }, 80);
+	// The cursor was moved elsewhere (timeline, keys); null = back to the latest moment.
+	setMoment(time) {
+		if (time === null) {
+			this.followLive = true;
+			return;
+		}
+		this.cursor = time;
+		this.revealCursor();
+		this.redrawWave();
 	}
 
 	// Aligned waveforms are read shifted by the server.
 	setAlign(align) {
 		this.align = align;
-		this.onViewChange();
+		this.fetchWave();
 	}
 
 	clear() {
@@ -101,7 +133,7 @@ export class Inspector {
 		this.wave?.destroy();
 		this.overview?.destroy();
 		this.corr = this.wave = this.overview = null;
-		this.waveKey = this.corrKey = null;
+		this.waveKey = this.corrKey = this.overviewKey = null;
 		this.result = null;
 		this.tableEl.replaceChildren();
 		this.keysEl.replaceChildren();
@@ -109,23 +141,41 @@ export class Inspector {
 
 	rebuild() {
 		const result = this.result;
+		const wave = this.waveData;
 		this.clear();
 		if (result) this.render(result);
+		if (wave) this.renderWaveform(wave);
 	}
 
 	render(result) {
 		fitHeight();
 		this.result = result;
+		this.cursor = result.time;
+		if (!this.waveView) {
+			this.waveView = { min: this.cursor - DEFAULT_WAVE_WIDTH, max: this.cursor };
+		} else if (result.live && this.followLive) {
+			const width = this.waveView.max - this.waveView.min;
+			this.waveView = { min: this.cursor - width, max: this.cursor };
+		} else {
+			this.revealCursor(false);
+		}
+		this.updateReadouts();
 		this.renderCorrelation(result);
-		this.renderWaveform(result);
 		this.renderTable(result);
+		if (this.overviewData) this.updateOverview(); else this.fetchOverview();
+		this.wave?.setScale('x', this.waveView);
+		// New data when the view moved or the delays to align by changed.
+		const view = this.waveData ? this.waveData.view : null;
+		if (!view || view.min !== this.waveView.min || view.max !== this.waveView.max || this.alignDelays() !== this.waveDelays) {
+			this.fetchWave();
+		}
 	}
 
 	updateReadouts() {
 		const c = this.corrView;
 		this.corrReadout.textContent = `${formatMs(c.min, 2)} … ${formatMs(c.max, 2)} ms`;
-		const span = this.waveView.max - this.waveView.min;
-		this.waveReadout.textContent = `${span < 10 ? span.toFixed(2) : span.toFixed(0)} ms window`;
+		const span = this.waveView ? this.waveView.max - this.waveView.min : DEFAULT_WAVE_WIDTH;
+		this.waveReadout.textContent = span < 1 ? `${(span * 1000).toFixed(span < 0.01 ? 2 : 0)} ms window` : `${span.toFixed(span < 10 ? 2 : 0)} s window`;
 	}
 
 	// --- view changes; fetch = false while a gesture is in progress
@@ -139,24 +189,49 @@ export class Inspector {
 		if (fetch) this.onViewChange();
 	}
 
+	// End of the recording as far as known.
+	sessionEnd() {
+		const store = this.levels();
+		const last = store.t.length ? store.t[store.t.length - 1] : 0;
+		return Math.max(this.duration, last, this.cursor || 0);
+	}
+
 	setWaveView(view, fetch = true) {
-		const block = this.result && this.result.blockMs ? this.result.blockMs : 1000;
-		const width = Math.min(Math.max(view.max - view.min, 0.2), block);
-		// Keep the view inside the analyzed block (it ends at the moment, 0 ms).
-		const max = Math.min(0, Math.max(-block + width, view.max));
-		this.waveView = { min: max - width, max };
+		// The view always lies within the recording, so it can zoom out to the whole session at most.
+		const end = this.sessionEnd();
+		const width = Math.min(Math.max(view.max - view.min, MIN_WAVE_WIDTH), MAX_WAVE_WIDTH, Math.max(end, MIN_WAVE_WIDTH));
+		const min = Math.max(0, Math.min(end - width, view.min));
+		this.waveView = { min, max: min + width };
 		this.wave?.setScale('x', this.waveView);
 		this.overview?.redraw(false, false);
 		this.updateReadouts();
-		if (fetch) this.onViewChange();
+		if (fetch) this.fetchWave();
+	}
+
+	// Moved by the user: stop following the latest moment.
+	moveWaveView(view, fetch) {
+		this.followLive = false;
+		this.setWaveView(view, fetch);
+	}
+
+	// Bring the cursor into view, keeping the zoom.
+	revealCursor(fetch = true) {
+		if (this.cursor === null || !this.waveView) return;
+		const { min, max } = this.waveView;
+		if (this.cursor >= min && this.cursor <= max) return;
+		const width = max - min;
+		this.setWaveView({ min: this.cursor - width / 2, max: this.cursor + width / 2 }, fetch);
 	}
 
 	resetCorrelation() {
 		this.setCorrView(DEFAULT_CORR);
 	}
 
+	// The end of the analyzed block, at the cursor.
 	resetWaveform() {
-		this.setWaveView(DEFAULT_WAVE);
+		if (this.cursor === null) return;
+		this.followLive = true;
+		this.setWaveView({ min: this.cursor - DEFAULT_WAVE_WIDTH, max: this.cursor });
 	}
 
 	// Fit the correlation view to the measured delays.
@@ -167,8 +242,14 @@ export class Inspector {
 		this.setCorrView({ min: min - margin, max: max + margin });
 	}
 
+	// While a gesture is in progress, refresh about every 80 ms so the charts follow the mouse.
+	refreshWhileDragging(refresh) {
+		if (this.dragTimer) return;
+		this.dragTimer = setTimeout(() => { this.dragTimer = null; refresh(true); }, 80);
+	}
+
 	// Ctrl+wheel (or pinch) zooms around the mouse, a horizontal swipe moves; the plain wheel scrolls the page.
-	wheel(u, e, apply, freeze, unfreeze) {
+	wheel(u, e, apply, refresh, freeze, unfreeze) {
 		const horizontal = Math.abs(e.deltaX) > Math.abs(e.deltaY);
 		if (!(e.ctrlKey || e.metaKey) && !horizontal) return;
 		e.preventDefault();
@@ -182,13 +263,13 @@ export class Inspector {
 			const factor = Math.exp(e.deltaY * 0.002);
 			apply({ min: at - (at - min) * factor, max: at + (max - at) * factor }, false);
 		}
-		this.fetchWhileDragging();
+		this.refreshWhileDragging(refresh);
 		clearTimeout(this.wheelTimer);
-		this.wheelTimer = setTimeout(() => { unfreeze?.(); this.onViewChange(); }, 250);
+		this.wheelTimer = setTimeout(() => { unfreeze?.(); refresh(false); }, 250);
 	}
 
 	// Dragging moves the view and pinching zooms; data is fetched while doing so and once more at the end.
-	bindDrag(u, apply, freeze, unfreeze) {
+	bindDrag(u, apply, refresh, freeze, unfreeze, onTap) {
 		let view;
 		const capture = () => { view = { min: u.scales.x.min, max: u.scales.x.max }; freeze?.(); };
 		bindGestures(u.over, {
@@ -196,16 +277,17 @@ export class Inspector {
 			onDrag: (dx) => {
 				const shift = -dx * (view.max - view.min) / Math.max(u.over.clientWidth, 1);
 				apply({ min: view.min + shift, max: view.max + shift }, false);
-				this.fetchWhileDragging();
+				this.refreshWhileDragging(refresh);
 			},
-			onEnd: () => { unfreeze?.(); this.onViewChange(); },
+			onEnd: (moved) => { unfreeze?.(); if (moved) refresh(false); },
+			onTap,
 			onPinchStart: capture,
 			onPinch: (scale, clientX) => {
 				const at = view.min + (view.max - view.min) * (clientX - u.over.getBoundingClientRect().left) / Math.max(u.over.clientWidth, 1);
 				const width = (view.max - view.min) / scale;
 				const ratio = (at - view.min) / (view.max - view.min);
 				apply({ min: at - width * ratio, max: at + width * (1 - ratio) }, false);
-				this.fetchWhileDragging();
+				this.refreshWhileDragging(refresh);
 			},
 		});
 	}
@@ -222,6 +304,7 @@ export class Inspector {
 		}
 		this.corr?.destroy();
 		this.corrKey = key;
+		const refresh = (dragging) => this.onViewChange(dragging);
 		this.corr = new uPlot({
 			width: this.corrEl.clientWidth || 500, height: HEIGHT.value, legend: { show: false },
 			series: [{}, ...result.pairs.map((p, i) => ({ label: this.labels[i], stroke: seriesColor(i), width: 2, points: { show: false } }))],
@@ -231,8 +314,8 @@ export class Inspector {
 			hooks: {
 				draw: [(u) => this.drawPeaks(u)],
 				ready: [(u) => {
-					u.over.addEventListener('wheel', (e) => this.wheel(u, e, (v, f) => this.setCorrView(v, f)), { passive: false });
-					this.bindDrag(u, (v, f) => this.setCorrView(v, f));
+					u.over.addEventListener('wheel', (e) => this.wheel(u, e, (v, f) => this.setCorrView(v, f), refresh), { passive: false });
+					this.bindDrag(u, (v, f) => this.setCorrView(v, f), refresh);
 					u.over.addEventListener('dblclick', () => this.fitCorrelation());
 				}],
 			},
@@ -247,13 +330,7 @@ export class Inspector {
 		this.result.pairs.forEach((p, i) => {
 			const x = u.valToPos(p.delay, 'x', true);
 			if (x < u.bbox.left || x > u.bbox.left + u.bbox.width) return;
-			ctx.strokeStyle = seriesColor(i);
-			ctx.lineWidth = devicePixelRatio;
-			ctx.setLineDash([3 * devicePixelRatio, 3 * devicePixelRatio]);
-			ctx.beginPath();
-			ctx.moveTo(x, u.bbox.top);
-			ctx.lineTo(x, u.bbox.top + u.bbox.height);
-			ctx.stroke();
+			verticalLine(u, x, seriesColor(i), true);
 		});
 		ctx.restore();
 	}
@@ -265,25 +342,58 @@ export class Inspector {
 		const colors = chartColors();
 		const ref = result.pairs.length ? result.pairs[0].ref : 0;
 		if (result.pairs.every((p) => p.ref === p.sig)) {
-			return [{ channel: ref, label: `Ch ${ref + 1}`, color: colors.ink2, delay: 0 }];
+			return [{ channel: ref, label: `Ch ${ref + 1}`, color: colors.ink2, pair: 0, reference: true }];
 		}
-		return [{ channel: ref, label: `Ch ${ref + 1} (reference)`, color: colors.ink2, delay: 0 },
-			...result.pairs.map((p, i) => ({ channel: p.sig, label: `Ch ${p.sig + 1}`, color: seriesColor(i), delay: p.delay }))];
+		return [{ channel: ref, label: `Ch ${ref + 1} (reference)`, color: colors.ink2, pair: 0, reference: true },
+			...result.pairs.map((p, i) => ({ channel: p.sig, label: `Ch ${p.sig + 1}`, color: seriesColor(i), pair: i, reference: false }))];
+	}
+
+	// Delays of the compared channels at the cursor, "channel:ms,...", when aligning.
+	alignDelays() {
+		if (!this.align || !this.result) return '';
+		return this.result.pairs.filter((p) => p.sig !== p.ref).map((p) => `${p.sig}:${p.delay}`).join(',');
+	}
+
+	// Waveforms of the view plus a margin on both sides, so dragging shows data right away.
+	async fetchWave() {
+		if (!this.waveView || !this.result) return;
+		const seq = ++this.waveSeq;
+		const view = { ...this.waveView };
+		const margin = Math.min(view.max - view.min, 2);
+		const delays = this.alignDelays();
+		try {
+			const wave = await api.waveform({ from: (view.min - margin).toFixed(6), to: (view.max + margin).toFixed(6), delays });
+			if (seq <= this.waveRendered) return;
+			this.waveRendered = seq;
+			this.duration = wave.duration;
+			this.waveDelays = delays;
+			wave.view = view;
+			this.renderWaveform(wave);
+			// The recording turned out shorter than the view.
+			if (this.waveView.max > this.sessionEnd()) this.setWaveView(this.waveView);
+		} catch (e) {
+			if (seq !== this.waveSeq) return;
+			this.waveData = null;
+			this.noAudioEl.classList.remove('hidden');
+			this.wave?.destroy();
+			this.wave = null;
+			this.waveKey = null;
+		}
 	}
 
 	// uPlot data/series/bands for an envelope: a line per channel, or min/max bands when decimated.
-	traces(wave, shown, sampleRate) {
-		const n = wave.channels[0] ? wave.channels[0].min.length : 0;
-		const xs = Array.from({ length: n }, (_, i) => wave.startMs + i * wave.stepMs);
+	traces(wave, shown) {
+		const n = wave.channels && wave.channels[0] ? wave.channels[0].min.length : 0;
+		const xs = Array.from({ length: n }, (_, i) => wave.start + i * wave.step);
 		const data = [xs];
 		const series = [{}];
 		const bands = [];
-		const decimated = wave.stepMs * sampleRate / 1000 > 1.5;
+		const decimated = wave.step * wave.sampleRate > 1.5;
 		// The reference is drawn wide and light underneath, so channels that line up stay visible.
-		for (const [index, s] of shown.entries()) {
-			const trace = wave.channels.find((c) => c.channel === s.channel);
+		for (const s of shown) {
+			const trace = wave.channels ? wave.channels.find((c) => c.channel === s.channel) : null;
 			if (!trace) continue;
-			const reference = index === 0 && shown.length > 1;
+			const reference = s.reference && shown.length > 1;
 			if (decimated) {
 				data.push(trace.max, trace.min);
 				series.push({ stroke: s.color, width: 1, points: { show: false } }, { stroke: s.color, width: 1, points: { show: false } });
@@ -302,21 +412,18 @@ export class Inspector {
 		return [-m, m];
 	}
 
-	renderWaveform(result, force = false) {
-		const wave = result.waveform;
-		this.noAudioEl.classList.toggle('hidden', !!wave);
-		if (!wave) {
-			this.wave?.destroy();
-			this.overview?.destroy();
-			this.wave = this.overview = null;
-			this.waveKey = null;
-			this.keysEl.replaceChildren();
-			return;
-		}
+	redrawWave() {
+		this.wave?.redraw(false, false);
+		this.overview?.redraw(false, false);
+	}
 
+	renderWaveform(wave, force = false) {
+		this.waveData = wave;
+		this.noAudioEl.classList.add('hidden');
+		if (!this.result) return;
 		const colors = chartColors();
-		const shown = this.shownChannels(result);
-		const { data, series, bands, key } = this.traces(wave, shown, result.sampleRate);
+		const shown = this.shownChannels(this.result);
+		const { data, series, bands, key } = this.traces(wave, shown);
 
 		if (this.wave && this.waveKey === key && !force) {
 			this.wave.setData(data, true);
@@ -325,49 +432,97 @@ export class Inspector {
 			this.waveKey = key;
 			const freeze = () => { this.frozenWaveY = [this.wave.scales.y.min, this.wave.scales.y.max]; };
 			const unfreeze = () => { this.frozenWaveY = null; };
+			const refresh = () => this.fetchWave();
+			const select = (e) => {
+				const u = this.wave;
+				this.onSelect(u.posToVal(e.clientX - u.over.getBoundingClientRect().left, 'x'));
+			};
 			this.wave = new uPlot({
 				width: this.waveEl.clientWidth || 500, height: HEIGHT.value, legend: { show: false }, series, bands,
 				scales: { x: { time: false, range: () => [this.waveView.min, this.waveView.max] }, y: { range: (u, min, max) => this.waveY(u, min, max) } },
-				axes: axes(colors, 'Time relative to the moment (ms)', 'Amplitude'),
+				axes: axes(colors, 'Session time (s)', 'Amplitude'),
 				cursor: { points: { show: false }, drag: { x: false, y: false }, bind: { dblclick: () => null } },
 				hooks: {
+					drawClear: [(u) => this.drawBlock(u, colors)],
+					draw: [(u) => this.drawCursor(u, colors)],
 					ready: [(u) => {
-						u.over.addEventListener('wheel', (e) => this.wheel(u, e, (v, f) => this.setWaveView(v, f), freeze, unfreeze), { passive: false });
-						this.bindDrag(u, (v, f) => this.setWaveView(v, f), freeze, unfreeze);
+						u.over.addEventListener('wheel', (e) => this.wheel(u, e, (v, f) => this.moveWaveView(v, f), refresh, freeze, unfreeze), { passive: false });
+						this.bindDrag(u, (v, f) => this.moveWaveView(v, f), refresh, freeze, unfreeze, select);
 						u.over.addEventListener('dblclick', () => this.resetWaveform());
 					}],
 				},
 			}, data, this.waveEl);
 		}
-
-		this.renderOverview(result, shown, colors);
 		this.keysEl.replaceChildren(...shown.map((s) => el('span', {}, el('span', { class: 'key', style: `background:${s.color}` }), s.label)));
+		this.updateOverview();
 	}
 
-	// Overview of the analyzed block with the visible waveform window; click or drag to move the window.
-	renderOverview(result, shown, colors) {
-		if (!result.overview) {
-			this.overview?.destroy();
-			this.overview = null;
-			return;
+	// The analyzed block (it ends at the cursor), shaded.
+	drawBlock(u, colors) {
+		if (this.cursor === null || !this.result || !this.result.blockMs) return;
+		const left = Math.max(u.bbox.left, u.valToPos(this.cursor - this.result.blockMs / 1000, 'x', true));
+		const right = Math.min(u.bbox.left + u.bbox.width, u.valToPos(this.cursor, 'x', true));
+		if (right <= left) return;
+		const ctx = u.ctx;
+		ctx.save();
+		ctx.fillStyle = colors.accent;
+		ctx.globalAlpha = 0.06;
+		ctx.fillRect(left, u.bbox.top, right - left, u.bbox.height);
+		ctx.restore();
+	}
+
+	drawCursor(u, colors) {
+		if (this.cursor === null) return;
+		const x = u.valToPos(this.cursor, 'x', true);
+		if (x < u.bbox.left || x > u.bbox.left + u.bbox.width) return;
+		u.ctx.save();
+		verticalLine(u, x, colors.accent, true);
+		u.ctx.restore();
+	}
+
+	// The recording grew: refresh the navigator, at most every 2 s.
+	sessionGrew() {
+		if (this.overviewTimer) return;
+		this.overviewTimer = setTimeout(() => { this.overviewTimer = null; this.fetchOverview(); }, 2000);
+	}
+
+	async fetchOverview() {
+		if (!this.result || this.overviewLoading) return;
+		this.overviewLoading = true;
+		try {
+			const overview = await api.overview({ points: Math.round(Math.max(this.overviewEl.clientWidth, 300)) });
+			this.overviewData = overview;
+			this.duration = Math.max(this.duration, overview.duration);
+			this.updateOverview();
+		} catch (e) {
+			// No audio; the waveform chart says so.
+		} finally {
+			this.overviewLoading = false;
 		}
-		const { data, series, bands, key } = this.traces(result.overview, shown, result.sampleRate);
+	}
+
+	// Navigator: the waveforms of the whole recording, with the visible window and the cursor.
+	updateOverview() {
+		if (!this.result || !this.waveView || !this.overviewData) return;
+		const { data, series, bands, key } = this.traces(this.overviewData, this.shownChannels(this.result));
 		if (this.overview && this.overviewKey === key) {
 			this.overview.setData(data, true);
 			return;
 		}
 		this.overview?.destroy();
 		this.overviewKey = key;
-		const block = () => (this.result && this.result.blockMs) || 1000;
+		const colors = chartColors();
 		const moveTo = (clientX) => {
 			const u = this.overview;
 			const at = u.posToVal(clientX - u.over.getBoundingClientRect().left, 'x');
 			const width = this.waveView.max - this.waveView.min;
-			this.setWaveView({ min: at - width / 2, max: at + width / 2 }, false);
+			this.moveWaveView({ min: at - width / 2, max: at + width / 2 }, false);
 		};
+		const refresh = () => this.fetchWave();
 		this.overview = new uPlot({
 			width: this.overviewEl.clientWidth || 500, height: OVERVIEW_HEIGHT, legend: { show: false }, series, bands,
-			scales: { x: { time: false, range: () => [-block(), 0] }, y: { range: (u, min, max) => this.waveY(u, min, max) } },
+			scales: { x: { time: false, range: () => [0, Math.max(this.sessionEnd(), 1)] },
+				y: { range: (u, min, max) => { const m = Math.max(Math.abs(min || 0), Math.abs(max || 0), 1e-6) * 1.1; return [-m, m]; } } },
 			axes: [{ stroke: colors.muted, font: FONT, size: 22, grid: { show: false }, ticks: { stroke: colors.axis, size: 3 }, values: tickValues },
 				{ size: 58, values: (u, vals) => vals.map(() => ''), grid: { show: false }, ticks: { show: false } }],
 			cursor: { show: false, drag: { x: false, y: false } },
@@ -375,9 +530,9 @@ export class Inspector {
 				draw: [(u) => this.drawWindow(u, colors)],
 				ready: [(u) => {
 					bindGestures(u.over, {
-						onStart: (e) => { moveTo(e.clientX); this.fetchWhileDragging(); },
-						onDrag: (dx, e) => { moveTo(e.clientX); this.fetchWhileDragging(); },
-						onEnd: () => this.onViewChange(),
+						onStart: (e) => { moveTo(e.clientX); this.refreshWhileDragging(refresh); },
+						onDrag: (dx, e) => { moveTo(e.clientX); this.refreshWhileDragging(refresh); },
+						onEnd: refresh,
 					});
 					// Ctrl+wheel or a horizontal swipe moves the window.
 					u.over.addEventListener('wheel', (e) => {
@@ -386,10 +541,10 @@ export class Inspector {
 						e.preventDefault();
 						const width = this.waveView.max - this.waveView.min;
 						const shift = width * (horizontal ? e.deltaX : e.deltaY) / 200;
-						this.setWaveView({ min: this.waveView.min + shift, max: this.waveView.max + shift }, false);
-						this.fetchWhileDragging();
+						this.moveWaveView({ min: this.waveView.min + shift, max: this.waveView.max + shift }, false);
+						this.refreshWhileDragging(refresh);
 						clearTimeout(this.wheelTimer);
-						this.wheelTimer = setTimeout(() => this.onViewChange(), 250);
+						this.wheelTimer = setTimeout(refresh, 250);
 					}, { passive: false });
 				}],
 			},
@@ -397,6 +552,7 @@ export class Inspector {
 	}
 
 	drawWindow(u, colors) {
+		if (!this.waveView) return;
 		const left = Math.max(u.bbox.left, u.valToPos(this.waveView.min, 'x', true));
 		const right = Math.min(u.bbox.left + u.bbox.width, Math.max(left + 2, u.valToPos(this.waveView.max, 'x', true)));
 		const ctx = u.ctx;
@@ -409,6 +565,7 @@ export class Inspector {
 		ctx.strokeStyle = colors.accent;
 		ctx.lineWidth = devicePixelRatio;
 		ctx.strokeRect(left, u.bbox.top, right - left, u.bbox.height);
+		if (this.cursor !== null) verticalLine(u, u.valToPos(this.cursor, 'x', true), colors.accent, true);
 		ctx.restore();
 	}
 

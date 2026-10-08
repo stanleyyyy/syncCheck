@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <map>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -110,6 +111,21 @@ public:
 	 */
 	bool inspect(double time, double rangeMs, double windowMs, double offsetMs, bool live, bool align, nlohmann::json &result,
 		std::string &error) const;
+
+	/**
+	 * @brief Waveforms of the current session's audio between two session times.
+	 *
+	 * @param from Start in seconds.
+	 * @param to End in seconds.
+	 * @param delaysMs Channels to read later by a delay in ms, so they line up with the reference.
+	 */
+	bool waveform(double from, double to, const std::map<unsigned int, double> &delaysMs, nlohmann::json &result,
+		std::string &error) const;
+
+	/**
+	 * @brief Waveforms of the whole recording of the current session, in at most points buckets.
+	 */
+	bool overview(std::size_t points, nlohmann::json &result, std::string &error) const;
 
 	/**
 	 * @brief Audio of the current session (recording or input file), empty if there is none.
@@ -241,4 +257,17 @@ private:
 	std::string m_status = "Idle";
 	Session m_session;
 	int m_lastSessionId = 0;
+
+	// Coarse min/max of the session audio for overview(); only new audio is read while recording.
+	struct OverviewCache
+	{
+		std::string m_audio;
+		unsigned int m_channels = 0;
+		unsigned int m_sampleRate = 0;
+		uint64_t m_frames = 0;		///< frames covered by whole buckets
+		std::vector<float> m_min;	///< bucket * channels + channel
+		std::vector<float> m_max;
+	};
+	mutable std::mutex m_overviewMutex;
+	mutable OverviewCache m_overview;
 };
