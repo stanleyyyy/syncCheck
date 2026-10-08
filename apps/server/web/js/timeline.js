@@ -76,6 +76,8 @@ export class Timeline {
 		this.xRange = null;
 		this.selection = null;
 		this.playhead = null;
+		this.frozenY = null;
+		this.unfreezeTimer = null;
 		this.charts = [];
 		new ResizeObserver(() => this.resize()).observe(delayEl);
 		window.addEventListener('resize', () => this.resize());
@@ -104,7 +106,7 @@ export class Timeline {
 		this.delay = new uPlot({
 			width, height: HEIGHT.delay, legend: { show: false },
 			series: [{ label: 'Time' }, ...this.labels.map((label, i) => ({ label, stroke: seriesColor(i), width: 2, points: { show: false } }))],
-			scales: { x: { time: false } },
+			scales: { x: { time: false }, y: { range: (u, min, max) => this.yRange(u, min, max) } },
 			axes: axes(colors, 'Delay (ms)', (v) => formatMs(v, 2)),
 			cursor: cursor(8),
 			plugins: [tooltipPlugin((v) => formatMs(v), 'ms'), markers],
@@ -114,7 +116,7 @@ export class Timeline {
 		const metric = METRICS[this.metric];
 		this.metricChart = new uPlot({
 			width, height: HEIGHT.metric, legend: { show: false }, series: this.metricSeries(),
-			scales: { x: { time: false }, y: metric.range ? { range: metric.range } : {} },
+			scales: { x: { time: false }, y: { range: metric.range ? metric.range : (u, min, max) => this.yRange(u, min, max) } },
 			axes: axes(colors, `${metric.label} (${metric.unit})`, (v) => metric.format(v)),
 			cursor: cursor(6),
 			plugins: [tooltipPlugin(metric.format, metric.unit), markers],
@@ -138,6 +140,32 @@ export class Timeline {
 
 		this.charts = [this.delay, this.metricChart, this.overview];
 		this.applyRange();
+	}
+
+	// The y axes fit the visible data, except while dragging or zooming, which would make them jump.
+	yRange(u, min, max) {
+		const frozen = this.frozenY && this.frozenY.get(u);
+		if (frozen) return frozen;
+		if (min === null || max === null) return [0, 1];
+		return uPlot.rangeNum(min, max, 0.1, true);
+	}
+
+	freezeY() {
+		if (this.frozenY) return;
+		this.frozenY = new Map([this.delay, this.metricChart].map((u) => [u, [u.scales.y.min, u.scales.y.max]]));
+	}
+
+	unfreezeY() {
+		clearTimeout(this.unfreezeTimer);
+		this.frozenY = null;
+		this.applyRange();
+	}
+
+	// Wheel zooming keeps the y axes until the wheel has been idle for a moment.
+	freezeYBriefly() {
+		this.freezeY();
+		clearTimeout(this.unfreezeTimer);
+		this.unfreezeTimer = setTimeout(() => this.unfreezeY(), 400);
 	}
 
 	metricSeries() {
@@ -261,6 +289,7 @@ export class Timeline {
 	// Wheel: zoom around the mouse; Shift+wheel or a horizontal swipe: move.
 	onWheel(u, e, zoomAround) {
 		e.preventDefault();
+		this.freezeYBriefly();
 		const horizontal = Math.abs(e.deltaX) > Math.abs(e.deltaY);
 		if (e.shiftKey || horizontal) {
 			const delta = horizontal ? e.deltaX : e.deltaY;
@@ -281,6 +310,7 @@ export class Timeline {
 			const move = (m) => {
 				const dx = m.clientX - start.x;
 				if (!start.moved && Math.abs(dx) < 4) return;
+				if (!start.moved) this.freezeY();
 				start.moved = true;
 				u.over.classList.add('dragging');
 				this.setXRange(start.range.min - dx * pxToTime, start.range.max - dx * pxToTime);
@@ -289,7 +319,9 @@ export class Timeline {
 				window.removeEventListener('mousemove', move);
 				window.removeEventListener('mouseup', up);
 				u.over.classList.remove('dragging');
-				if (!start.moved && u.cursor.idx !== null && u.cursor.idx !== undefined) {
+				if (start.moved) {
+					this.unfreezeY();
+				} else if (u.cursor.idx !== null && u.cursor.idx !== undefined) {
 					this.onSelect(u.data[0][u.cursor.idx]);
 				}
 			};
@@ -310,6 +342,7 @@ export class Timeline {
 		};
 		u.over.addEventListener('mousedown', (e) => {
 			if (e.button !== 0) return;
+			this.freezeY();
 			center(e.clientX);
 			u.over.classList.add('dragging');
 			const move = (m) => center(m.clientX);
@@ -317,6 +350,7 @@ export class Timeline {
 				window.removeEventListener('mousemove', move);
 				window.removeEventListener('mouseup', up);
 				u.over.classList.remove('dragging');
+				this.unfreezeY();
 			};
 			window.addEventListener('mousemove', move);
 			window.addEventListener('mouseup', up);

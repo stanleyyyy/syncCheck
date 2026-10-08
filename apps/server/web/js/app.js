@@ -27,7 +27,7 @@ const timeline = new Timeline({
 	onFollowChange: (follow) => { $('follow').checked = follow; updateRangeButtons(); updateCards(); },
 });
 const inspector = new Inspector({
-	corrEl: $('corrChart'), waveEl: $('waveChart'), keysEl: $('waveKeys'), tableEl: $('inspectTable'), noAudioEl: $('noAudio'),
+	corrEl: $('corrChart'), waveEl: $('waveChart'), overviewEl: $('waveOverview'), keysEl: $('waveKeys'), tableEl: $('inspectTable'), noAudioEl: $('noAudio'),
 	corrReadout: $('corrReadout'), waveReadout: $('waveReadout'),
 	onViewChange: () => scheduleInspect(150, true),
 });
@@ -193,7 +193,7 @@ function onMeasurements(batch) {
 	updateCards();
 	updateElapsed();
 	renderHeader();
-	if (app.selection === null) scheduleInspect(1000, false);
+	if (app.selection === null) scheduleInspect(500, false);
 }
 
 // Inspector: the selected moment or, without a selection, the latest measurement.
@@ -361,6 +361,8 @@ $('metricButtons').addEventListener('click', (e) => {
 });
 $('backToLive').addEventListener('click', backToLive);
 $('alignWaves').addEventListener('change', (e) => inspector.setAlign(e.target.checked));
+$('corrReset').addEventListener('click', () => inspector.resetCorrelation());
+$('waveReset').addEventListener('click', () => inspector.resetWaveform());
 $('playButton').addEventListener('click', () => (app.audio ? stopPlayback() : startPlayback()));
 
 initTheme($('themeToggle'));

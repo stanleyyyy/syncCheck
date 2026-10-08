@@ -506,19 +506,25 @@ bool AnalyzerService::inspect(double time, double rangeMs, double windowMs, doub
 	result["lag"] = std::move(lags);
 	result["pairs"] = std::move(pairs);
 
-	// Waveforms of all channels around the moment.
+	// Waveforms of all channels: the requested window and, for navigation, an overview of the
+	// analyzed block (which ends at the moment). Times are in ms relative to the moment.
 	if (haveAudio && reader.getSampleRate() == sampleRate) {
 		const unsigned int channels = reader.getChannels();
-		const double centerFrame = double(std::min<uint64_t>(snapshot.m_frames, available)) + offsetMs / 1000.0 * sampleRate;
-		const uint64_t center = static_cast<uint64_t>(std::max(0.0, centerFrame));
-		const uint64_t half = static_cast<uint64_t>(windowMs / 2000.0 * sampleRate);
-		const uint64_t start = center > half ? center - half : 0;
-		const uint64_t end = std::min<uint64_t>(center + half, available);
-		if (end > start && reader.seek(start)) {
+		const uint64_t moment = std::min<uint64_t>(snapshot.m_frames, available);
+
+		auto envelope = [&](double fromMs, double toMs, std::size_t maxPoints) -> json {
+			const auto toFrame = [&](double ms) {
+				return static_cast<uint64_t>(std::clamp(double(moment) + ms / 1000.0 * sampleRate, 0.0, double(available)));
+			};
+			const uint64_t start = toFrame(fromMs);
+			const uint64_t end = toFrame(toMs);
+			if (end <= start || !reader.seek(start)) {
+				return nullptr;
+			}
 			const std::size_t frames = static_cast<std::size_t>(end - start);
 			std::vector<float> samples(frames * channels, 0.0f);
 			const std::size_t read = reader.readFrames(samples.data(), frames);
-			const std::size_t buckets = std::min(read, MAX_TRACE_POINTS);
+			const std::size_t buckets = std::min(read, maxPoints);
 			const double framesPerBucket = buckets ? double(read) / buckets : 1.0;
 
 			json traces = json::array();
@@ -532,16 +538,28 @@ bool AnalyzerService::inspect(double time, double rangeMs, double windowMs, doub
 						lo = std::min(lo, samples[i * channels + ch]);
 						hi = std::max(hi, samples[i * channels + ch]);
 					}
-					mins.push_back(round4(lo));
-					maxs.push_back(round4(hi));
+					// Full sample precision; quiet signals would turn into steps otherwise.
+					mins.push_back(std::round(double(lo) * 1e7) / 1e7);
+					maxs.push_back(std::round(double(hi) * 1e7) / 1e7);
 				}
 				traces.push_back({ { "channel", ch }, { "min", std::move(mins) }, { "max", std::move(maxs) } });
 			}
-			result["waveform"] = {
-				{ "startMs", (double(start) - double(std::min<uint64_t>(snapshot.m_frames, available))) * 1000.0 / sampleRate },
+			return {
+				{ "startMs", (double(start) - double(moment)) * 1000.0 / sampleRate },
 				{ "stepMs", framesPerBucket * 1000.0 / sampleRate },
 				{ "channels", std::move(traces) },
 			};
+		};
+
+		const json wave = envelope(offsetMs - windowMs / 2, offsetMs + windowMs / 2, MAX_TRACE_POINTS);
+		if (!wave.is_null()) {
+			result["waveform"] = wave;
+		}
+		const double blockMs = 1000.0 * settings.m_blockSize / sampleRate;
+		const json overview = envelope(-blockMs, 0.0, 600);
+		if (!overview.is_null()) {
+			result["overview"] = overview;
+			result["blockMs"] = blockMs;
 		}
 	}
 	return true;
