@@ -22,7 +22,9 @@ function axes(colors, yLabel, yValues) {
 		{ ...common, grid: { stroke: colors.grid, width: 1 }, space: 90,
 			// Show fractions of a second once the ticks are less than a second apart.
 			values: (u, vals, axis, space, incr) => vals.map((v) => formatTime(v, incr < 1)) },
-		{ ...common, grid: { stroke: colors.grid, width: 1 }, label: yLabel, size: 64, labelSize: 18, values: (u, vals) => vals.map(yValues) },
+		// As many decimals as the tick spacing needs (at least 2), so close values stay distinguishable.
+		{ ...common, grid: { stroke: colors.grid, width: 1 }, label: yLabel, size: 64, labelSize: 18,
+			values: (u, vals, axis, space, incr) => vals.map((v) => yValues(v, Math.max(2, Math.min(4, -Math.floor(Math.log10(incr || 1)))))) },
 	];
 }
 
@@ -106,8 +108,9 @@ export class Timeline {
 		this.delay = new uPlot({
 			width, height: HEIGHT.delay, legend: { show: false },
 			series: [{ label: 'Time' }, ...this.labels.map((label, i) => ({ label, stroke: seriesColor(i), width: 2, points: { show: false } }))],
-			scales: { x: { time: false }, y: { range: (u, min, max) => this.yRange(u, min, max) } },
-			axes: axes(colors, 'Delay (ms)', (v) => formatMs(v, 2)),
+			// At least 0.1 ms tall, so a steady delay is a flat line instead of magnified noise.
+			scales: { x: { time: false }, y: { range: (u, min, max) => this.yRange(u, min, max, 0.1) } },
+			axes: axes(colors, 'Delay (ms)', (v, decimals) => formatMs(v, decimals)),
 			cursor: cursor(8),
 			plugins: [tooltipPlugin((v) => formatMs(v), 'ms'), markers],
 			hooks: { ready: [(u) => this.bindInteraction(u)] },
@@ -143,10 +146,14 @@ export class Timeline {
 	}
 
 	// The y axes fit the visible data, except while dragging or zooming, which would make them jump.
-	yRange(u, min, max) {
+	yRange(u, min, max, minSpan = 0) {
 		const frozen = this.frozenY && this.frozenY.get(u);
 		if (frozen) return frozen;
 		if (min === null || max === null) return [0, 1];
+		if (max - min < minSpan) {
+			const center = (min + max) / 2;
+			return [center - minSpan / 2, center + minSpan / 2];
+		}
 		return uPlot.rangeNum(min, max, 0.1, true);
 	}
 

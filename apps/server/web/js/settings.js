@@ -1,5 +1,6 @@
 // Settings drawer.
 import { api } from './api.js';
+import { confirmAction } from './confirm.js';
 import { el } from './format.js';
 
 const SAMPLE_RATES = [44100, 48000, 88200, 96000, 192000];
@@ -97,6 +98,9 @@ export class SettingsDrawer {
 	}
 
 	async reset() {
+		const ok = await confirmAction({ title: 'Reset all settings?', message: 'Input, measurement and analysis settings return to their defaults.',
+			confirm: 'Reset' });
+		if (!ok) return;
 		try {
 			this.settings = await api.resetSettings();
 			this.fileInfo = null;

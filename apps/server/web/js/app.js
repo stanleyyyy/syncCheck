@@ -35,6 +35,7 @@ const inspector = new Inspector({
 const settingsDrawer = new SettingsDrawer({ drawer: $('settingsDrawer'), scrim: $('scrim'), body: $('settingsBody'),
 	onSaved: (settings) => { app.state.settings = settings; renderHeader(); } });
 const sessions = new SessionsPanel({ list: $('sessionList'), search: $('sessionSearch'), count: $('sessionCount'), footer: $('sessionsDisk'),
+	selectionBar: $('selectionBar'),
 	onOpened: (state) => onState(state), onError: showError });
 
 // Sidebar visibility is remembered per browser; narrow windows start without it.
