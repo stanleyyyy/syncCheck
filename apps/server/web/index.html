@@ -43,68 +43,61 @@
 
 		<section class="pairs hidden" id="pairs" aria-label="Measured pairs"></section>
 
-		<section class="panel hidden" id="timelinePanel">
-			<div class="panel-head">
-				<h2>Delay over time</h2>
-				<div class="spacer"></div>
-				<div class="seg" id="rangeButtons">
-					<button data-range="60">1 min</button>
-					<button data-range="600">10 min</button>
-					<button data-range="3600">1 h</button>
-					<button data-range="0">All</button>
+		<div class="workspace hidden" id="workspace">
+			<section class="panel" id="timelinePanel">
+				<div class="panel-head">
+					<h2>Delay over time</h2>
+					<div class="seg" id="rangeButtons">
+						<button data-range="60">1 min</button>
+						<button data-range="600">10 min</button>
+						<button data-range="3600">1 h</button>
+						<button data-range="0">All</button>
+					</div>
+					<label class="toggle"><input type="checkbox" id="follow" checked> Follow live</label>
+					<div class="spacer"></div>
+					<div class="playback" id="playback">
+						<button class="btn small" id="playButton" title="Play from the selected moment to the end of the view (Space)">▶ Play</button>
+						<select id="listen" title="What to listen to"></select>
+					</div>
 				</div>
-				<label class="toggle"><input type="checkbox" id="follow" checked> Follow live</label>
-			</div>
-			<div class="chart" id="delayChart"></div>
-			<div class="panel-head" style="margin: 12px 0 4px">
-				<div class="seg" id="metricButtons">
-					<button data-metric="confidence">Confidence</button>
-					<button data-metric="pslr">PSLR</button>
-					<button data-metric="level">Level</button>
+				<div class="chart" id="delayChart"></div>
+				<div class="metric-head">
+					<div class="seg" id="metricButtons">
+						<button data-metric="confidence">Confidence</button>
+						<button data-metric="pslr">PSLR</button>
+						<button data-metric="level">Level</button>
+					</div>
 				</div>
-			</div>
-			<div class="chart" id="metricChart"></div>
-			<div class="chart overview" id="overviewChart"></div>
-			<p class="hint">Drag on a chart to zoom, drag on the overview to move through the session, double-click to show everything.
-				Click a moment to inspect it; ← → step through measurements.</p>
-		</section>
+				<div class="chart" id="metricChart"></div>
+				<div class="chart overview" id="overviewChart"></div>
+				<p class="hint">Scroll to zoom, Shift+scroll to move, drag to zoom into a range, double-click for everything.
+					Click a moment to inspect it · ← → step · + − zoom · Space play.</p>
+			</section>
 
-		<section class="panel hidden" id="inspectPanel">
-			<div class="panel-head">
-				<h2>Inspect <span class="num" id="inspectTime"></span></h2>
-				<span class="live-badge hidden" id="liveBadge">Live</span>
-				<button class="btn small hidden" id="backToLive">Back to live</button>
-				<div class="spacer"></div>
-				<label class="muted" for="corrRange">Lag</label>
-				<select id="corrRange" style="width:auto">
-					<option value="2">±2 ms</option>
-					<option value="10" selected>±10 ms</option>
-					<option value="50">±50 ms</option>
-					<option value="200">±200 ms</option>
-				</select>
-				<label class="muted" for="waveWindow">Window</label>
-				<select id="waveWindow" style="width:auto">
-					<option value="5" selected>5 ms</option>
-					<option value="20">20 ms</option>
-					<option value="100">100 ms</option>
-					<option value="1000">1 s</option>
-				</select>
-				<label class="toggle" title="Shift each channel by its measured delay"><input type="checkbox" id="alignWaves"> Align by delay</label>
-			</div>
-			<div class="inspect-grid">
-				<div>
+			<section class="panel" id="inspectPanel">
+				<div class="panel-head">
+					<h2>Inspect <span class="num" id="inspectTime"></span></h2>
+					<span class="live-badge hidden" id="liveBadge">Live</span>
+					<button class="btn small hidden" id="backToLive">Back to live</button>
+				</div>
+				<div class="subhead">
 					<h3>Cross-correlation</h3>
-					<div class="chart" id="corrChart"></div>
+					<span class="muted num" id="corrReadout"></span>
 				</div>
-				<div>
+				<div class="chart" id="corrChart"></div>
+				<div class="subhead">
 					<h3>Waveforms</h3>
-					<div class="chart" id="waveChart"></div>
-					<p class="hint hidden" id="noAudio">No audio recorded for this session; enable “Record input” to see waveforms.</p>
+					<span class="muted num" id="waveReadout"></span>
+					<div class="spacer"></div>
+					<label class="toggle" title="Shift each channel by its measured delay"><input type="checkbox" id="alignWaves"> Align by delay</label>
 				</div>
-			</div>
-			<table class="values" id="inspectTable"></table>
-			<p class="form-error hidden" id="inspectError"></p>
-		</section>
+				<div class="chart" id="waveChart"></div>
+				<div class="keys" id="waveKeys"></div>
+				<p class="hint hidden" id="noAudio">No audio for this session; enable “Record input” to see waveforms.</p>
+				<table class="values" id="inspectTable"></table>
+				<p class="form-error hidden" id="inspectError"></p>
+			</section>
+		</div>
 	</main>
 
 	<div class="scrim hidden" id="scrim"></div>
@@ -112,6 +105,8 @@
 		<header><h2>Settings</h2><div class="spacer"></div><button class="btn ghost" id="closeSettings" aria-label="Close">✕</button></header>
 		<div class="body" id="settingsBody"></div>
 		<footer>
+			<button class="btn ghost" id="resetSettings" title="Restore the default settings">Reset to defaults</button>
+			<div class="spacer"></div>
 			<button class="btn" id="cancelSettings">Cancel</button>
 			<button class="btn primary" id="saveSettings">Save</button>
 		</footer>

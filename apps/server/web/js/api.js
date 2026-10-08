@@ -18,6 +18,7 @@ export const api = {
 	state: () => request('GET', 'api/state'),
 	devices: () => request('GET', 'api/devices'),
 	saveSettings: (settings) => request('PUT', 'api/settings', settings),
+	resetSettings: () => request('POST', 'api/settings/reset'),
 	start: () => request('POST', 'api/start'),
 	stop: () => request('POST', 'api/stop'),
 	fileInfo: (path) => request('GET', `api/fileinfo?path=${encodeURIComponent(path)}`),

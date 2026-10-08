@@ -96,6 +96,18 @@ export class SettingsDrawer {
 		}
 	}
 
+	async reset() {
+		try {
+			this.settings = await api.resetSettings();
+			this.fileInfo = null;
+			this.error = '';
+			this.onSaved(this.settings);
+		} catch (e) {
+			this.error = e.message;
+		}
+		this.render();
+	}
+
 	render() {
 		const s = this.settings;
 		if (!s) return;
@@ -205,7 +217,8 @@ export class SettingsDrawer {
 						s.measured = measured.length === all.length ? [] : measured.sort((a, b) => a - b);
 					} }), `Ch ${ch + 1}`));
 			}
-			measurement.append(field('Measure', channels < 2 ? el('span', { class: 'form-error', text: 'Needs at least 2 input channels' }) : chips));
+			measurement.append(field('Compare with', channels < 2 ? el('span', { class: 'form-error', text: 'Needs at least 2 input channels' }) : chips,
+				'Channels whose delay against the reference is measured'));
 			measurement.append(field('Frequency range', el('div', { class: 'row-inline' },
 				number(s.minFreq, { min: 0, step: 100, onchange: set('minFreq', int) }), el('span', { class: 'muted', text: '–' }),
 				number(s.maxFreq, { min: 100, step: 100, onchange: set('maxFreq', int) }), el('span', { class: 'muted', text: 'Hz' }))));

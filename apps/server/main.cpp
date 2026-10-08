@@ -178,6 +178,77 @@ static bool generateSignal(const httplib::Request &req, const ServerSettings &se
 	return true;
 }
 
+/**
+ * @brief Cut a part of an audio file into a WAV file in memory.
+ * @param channelList Comma separated channels to keep, empty keeps all.
+ */
+static bool extractAudio(const std::string &path, double from, double to, const std::string &channelList,
+	const std::string &tempDir, std::string &wav, std::string &error)
+{
+	WavReader reader;
+	if (path.empty() || !reader.open(path)) {
+		error = "this session has no audio";
+		return false;
+	}
+	const unsigned int channels = reader.getChannels();
+	const unsigned int sampleRate = reader.getSampleRate();
+
+	std::vector<unsigned int> keep;
+	try {
+		for (float ch : parseList(channelList)) {
+			if (ch < 0 || ch >= channels) {
+				error = "invalid channel";
+				return false;
+			}
+			keep.push_back(static_cast<unsigned int>(ch));
+		}
+	} catch (const std::exception &) {
+		error = "invalid channel list";
+		return false;
+	}
+	if (keep.empty()) {
+		for (unsigned int ch = 0; ch < channels; ch++) {
+			keep.push_back(ch);
+		}
+	}
+
+	// At most 10 minutes per request.
+	const std::size_t length = reader.getLengthInFrames();
+	const std::size_t start = std::min<std::size_t>(static_cast<std::size_t>(std::max(0.0, from) * sampleRate), length);
+	std::size_t end = std::min<std::size_t>(static_cast<std::size_t>(std::max(from, to) * sampleRate), length);
+	end = std::min<std::size_t>(end, start + std::size_t(600) * sampleRate);
+	if (end <= start || !reader.seek(start)) {
+		error = "empty range";
+		return false;
+	}
+
+	std::vector<float> input((end - start) * channels);
+	const std::size_t frames = reader.readFrames(input.data(), end - start);
+	std::vector<float> output(frames * keep.size());
+	for (std::size_t i = 0; i < frames; i++) {
+		for (std::size_t c = 0; c < keep.size(); c++) {
+			output[i * keep.size() + c] = input[i * channels + keep[c]];
+		}
+	}
+
+	static std::atomic<unsigned int> counter { 0 };
+	const std::string temp = (fs::path(tempDir) / ("playback-" + std::to_string(counter++) + ".wav")).string();
+	{
+		WavWriter writer;
+		if (!writer.open(temp, static_cast<unsigned int>(keep.size()), sampleRate)) {
+			error = "cannot write " + temp;
+			return false;
+		}
+		writer.writeFrames(output.data(), frames);
+	}
+	std::ifstream file(temp, std::ios::binary);
+	wav.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+	file.close();
+	std::error_code ec;
+	fs::remove(temp, ec);
+	return true;
+}
+
 int main(int argc, char *argv[])
 {
 	std::string host = "127.0.0.1";
@@ -238,6 +309,22 @@ int main(int argc, char *argv[])
 		}
 	});
 
+	server.Post("/api/settings/reset", [&](const httplib::Request &, httplib::Response &res) {
+		service.resetSettings();
+		sendJson(res, service.settings());
+	});
+
+	// Audio of the session between from and to (seconds), optionally only some channels, for playback.
+	server.Get("/api/audio.wav", [&](const httplib::Request &req, httplib::Response &res) {
+		std::string wav, error;
+		if (!extractAudio(service.sessionAudio(), queryNumber(req, "from", 0), queryNumber(req, "to", 0),
+				req.get_param_value("channels"), tempDir, wav, error)) {
+			sendError(res, error, 404);
+			return;
+		}
+		res.set_content(std::move(wav), "audio/wav");
+	});
+
 	server.Post("/api/start", [&](const httplib::Request &, httplib::Response &res) {
 		std::string error;
 		if (!service.start(error)) {
@@ -266,7 +353,7 @@ int main(int argc, char *argv[])
 		std::string error;
 		const bool live = req.has_param("live") && req.get_param_value("live") == "1";
 		if (!service.inspect(queryNumber(req, "t", 0), std::clamp(queryNumber(req, "range", 10), 0.1, 2000.0),
-				std::clamp(queryNumber(req, "window", 20), 0.5, 5000.0), live, result, error)) {
+				std::clamp(queryNumber(req, "window", 20), 0.5, 60000.0), queryNumber(req, "offset", 0), live, result, error)) {
 			sendError(res, error, 404);
 			return;
 		}

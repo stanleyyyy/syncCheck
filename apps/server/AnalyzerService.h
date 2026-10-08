@@ -70,6 +70,11 @@ public:
 	 */
 	void setSettings(const ServerSettings &settings);
 
+	/**
+	 * @brief Restore and save the default settings.
+	 */
+	void resetSettings();
+
 	bool start(std::string &error);
 	void stop();
 
@@ -98,10 +103,12 @@ public:
 	 *
 	 * @param time Session time in seconds; ignored when live is set.
 	 * @param rangeMs Correlation lag range (+/-) in ms.
-	 * @param windowMs Waveform window around the moment in ms.
+	 * @param windowMs Waveform window in ms.
+	 * @param offsetMs Center of the waveform window relative to the moment in ms.
 	 * @param live Use the latest measurement instead of re-analyzing the audio.
 	 */
-	bool inspect(double time, double rangeMs, double windowMs, bool live, nlohmann::json &result, std::string &error) const;
+	bool inspect(double time, double rangeMs, double windowMs, double offsetMs, bool live, nlohmann::json &result,
+		std::string &error) const;
 
 	/**
 	 * @brief Audio of the current session (recording or input file), empty if there is none.

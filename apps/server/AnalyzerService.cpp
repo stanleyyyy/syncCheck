@@ -170,6 +170,11 @@ void AnalyzerService::setSettings(const ServerSettings &settings)
 	notify();
 }
 
+void AnalyzerService::resetSettings()
+{
+	setSettings(ServerSettings());
+}
+
 void AnalyzerService::notify()
 {
 	m_version++;
@@ -417,7 +422,8 @@ std::string AnalyzerService::sessionAudio() const
 	return m_session.m_audio;
 }
 
-bool AnalyzerService::inspect(double time, double rangeMs, double windowMs, bool live, json &result, std::string &error) const
+bool AnalyzerService::inspect(double time, double rangeMs, double windowMs, double offsetMs, bool live, json &result,
+	std::string &error) const
 {
 	std::string audio;
 	SyncAnalyzerSettings settings;
@@ -503,7 +509,8 @@ bool AnalyzerService::inspect(double time, double rangeMs, double windowMs, bool
 	// Waveforms of all channels around the moment.
 	if (haveAudio && reader.getSampleRate() == sampleRate) {
 		const unsigned int channels = reader.getChannels();
-		const uint64_t center = std::min<uint64_t>(snapshot.m_frames, available);
+		const double centerFrame = double(std::min<uint64_t>(snapshot.m_frames, available)) + offsetMs / 1000.0 * sampleRate;
+		const uint64_t center = static_cast<uint64_t>(std::max(0.0, centerFrame));
 		const uint64_t half = static_cast<uint64_t>(windowMs / 2000.0 * sampleRate);
 		const uint64_t start = center > half ? center - half : 0;
 		const uint64_t end = std::min<uint64_t>(center + half, available);
@@ -531,7 +538,7 @@ bool AnalyzerService::inspect(double time, double rangeMs, double windowMs, bool
 				traces.push_back({ { "channel", ch }, { "min", std::move(mins) }, { "max", std::move(maxs) } });
 			}
 			result["waveform"] = {
-				{ "startMs", (double(start) - double(center)) * 1000.0 / sampleRate },
+				{ "startMs", (double(start) - double(std::min<uint64_t>(snapshot.m_frames, available))) * 1000.0 / sampleRate },
 				{ "stepMs", framesPerBucket * 1000.0 / sampleRate },
 				{ "channels", std::move(traces) },
 			};
