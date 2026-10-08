@@ -8,7 +8,6 @@
 #include <set>
 #include <sndfile.h>
 
-#include "nsdkStacktrace.h"
 #include "SyncCheck.h"
 #include "TestSignalGenerator.h"
 #include "Logger.h"
@@ -295,9 +294,6 @@ std::pair<bool, AppConfig> parseCommandLine(int argc, char *argv[])
 
 int main(int argc, char *argv[])
 {
-	// Install stack trace handler
-	nsdkStacktrace::install();
-
 	// Set desired log level
 	Logger::getInstance().setLogLevel(LOG_DEBUG);
 
