@@ -1,7 +1,8 @@
 #include "SyncCheck.h"
 #include "TestSignalGenerator.h"
 #include "Logger.h"
-#include <getopt.h>
+#include "CLI11.hpp"
+#include <sstream>
 #include <signal.h>
 #include <iostream>
 #include <iomanip>
@@ -35,22 +36,6 @@ void signalHandler(int signum)
 	g_running = false;
 }
 
-void printUsage(const char *programName)
-{
-	std::cerr << "Usage: " << programName << " [options]\n"
-			  << "Options:\n"
-			  << "  -d, --duration=SECS    Signal duration in seconds (default: 5.0)\n"
-			  << "  -o, --output=PREFIX    Output file prefix (default: test_signal)\n"
-			  << "  -q, --quiet            Disable progress output\n"
-			  << "  -r, --rate=RATE        Sample rate (default: 48000)\n"
-			  << "      --block-size=NUM   FFT block size (default: 8192)\n"
-			  << "      --overlap=NUM      Overlap percent (50 or 75, default: 50)\n"
-			  << "      --bands=NUM        Number of frequency bands (default: 4)\n"
-			  << "      --interp=NUM       Interpolation factor (default: 1)\n"
-			  << "      --delays=DELAYS    Comma-separated list of delays in ms for each band\n"
-			  << "  -h, --help             Show this help message\n";
-}
-
 std::vector<float> parseDelays(const std::string& delaysStr, size_t numBands)
 {
 	std::vector<float> delays;
@@ -69,97 +54,38 @@ std::vector<float> parseDelays(const std::string& delaysStr, size_t numBands)
 	return delays;
 }
 
-std::pair<bool, AppConfig> parseCommandLine(int argc, char *argv[])
+int main(int argc, char *argv[])
 {
 	AppConfig config;
-	static struct option long_options[] = {
-		{ "duration", required_argument, 0, 'd' },
-		{ "output", required_argument, 0, 'o' },
-		{ "quiet", no_argument, 0, 'q' },
-		{ "rate", required_argument, 0, 'r' },
-		{ "block-size", required_argument, 0, 1 },
-		{ "overlap", required_argument, 0, 2 },
-		{ "bands", required_argument, 0, 3 },
-		{ "interp", required_argument, 0, 4 },
-		{ "delays", required_argument, 0, 5 },
-		{ "help", no_argument, 0, 'h' },
-		{ 0, 0, 0, 0 }
-	};
+	bool quiet = false;
+	std::string delays;
 
-	int opt;
-	while ((opt = getopt_long(argc, argv, "d:o:qr:h", long_options, nullptr)) != -1) {
-		switch (opt) {
-		case 'd':
-			config.duration = std::stof(optarg);
-			break;
-		case 'o':
-			config.outputPrefix = optarg;
-			break;
-		case 'q':
-			config.verbose = false;
-			break;
-		case 'r':
-			config.sampleRate = std::stoi(optarg);
-			break;
-		case 1: // block-size
-			config.blockSize = std::stoi(optarg);
-			break;
-		case 2: // overlap
-			config.overlapPercent = std::stoi(optarg);
-			if (config.overlapPercent != 50 && config.overlapPercent != 75) {
-				DBG_ERROR("Invalid overlap percent. Must be 50 or 75");
-				return { false, config };
-			}
-			break;
-		case 3: // bands
-			config.numBands = std::stoi(optarg);
-			break;
-		case 4: // interp
-			config.interpFactor = std::stoi(optarg);
-			break;
-		case 5: // delays
-			config.delays = parseDelays(optarg, config.numBands);
-			if (config.delays.empty()) {
-				return { false, config };
-			}
-			break;
-		case 'h':
-			return { false, config };
-		default:
-			return { false, config };
+	CLI::App app { "Generates a sync test signal with a configurable delay per frequency band." };
+	app.option_defaults()->always_capture_default();
+	app.get_formatter()->column_width(32);
+
+	app.add_option("-d,--duration", config.duration, "Signal duration in seconds")->check(CLI::PositiveNumber);
+	app.add_option("-o,--output", config.outputPrefix, "Output file prefix");
+	app.add_flag("-q,--quiet", quiet, "Disable progress output");
+	app.add_option("-r,--rate", config.sampleRate, "Sample rate")->check(CLI::PositiveNumber);
+	app.add_option("--block-size", config.blockSize, "FFT block size")->check(CLI::PositiveNumber);
+	app.add_option("--overlap", config.overlapPercent, "Overlap percent")->check(CLI::IsMember({ 50, 75 }));
+	app.add_option("--bands", config.numBands, "Number of frequency bands");
+	app.add_option("--interp", config.interpFactor, "Interpolation factor");
+	app.add_option("--delays", delays, "Comma-separated list of delays in ms for each band");
+
+	CLI11_PARSE(app, argc, argv);
+	config.verbose = !quiet;
+
+	if (!delays.empty()) {
+		config.delays = parseDelays(delays, config.numBands);
+		if (config.delays.empty()) {
+			return 1;
 		}
 	}
 
-	// Validate parameters
-	if (config.duration <= 0) {
-		DBG_ERROR("Duration must be positive");
-		return { false, config };
-	}
-
-	if (config.sampleRate <= 0) {
-		DBG_ERROR("Sample rate must be positive");
-		return { false, config };
-	}
-
-	return { true, config };
-}
-
-int main(int argc, char *argv[])
-{
 	// Set desired log level
 	Logger::getInstance().setLogLevel(LOG_DEBUG);
-
-	if (argc < 2) {
-		printUsage(argv[0]);
-		return 1;
-	}
-
-	auto [configValid, config] = parseCommandLine(argc, argv);
-	if (!configValid) {
-		printUsage(argv[0]);
-		return 1;
-	}
-
 	// Set up signal handling
 	signal(SIGINT, signalHandler);
 	signal(SIGTERM, signalHandler);

@@ -1,247 +1,90 @@
 #pragma once
 
-#include "SyncCheckConfig.h"
-#include "Logger.h"
 #include "WavFile.h"
-#include <vector>
-#include <cstring>
+#include <atomic>
+#include <chrono>
+#include <memory>
 #include <string>
+#include <vector>
 
 class AudioSource
 {
 public:
 	virtual ~AudioSource() = default;
 	virtual bool isInitialized() const = 0;
+
+	/**
+	 * @brief Capture the next block of interleaved samples.
+	 * @return Captured samples, or an empty buffer at end of stream or after stop().
+	 */
 	virtual std::vector<float> captureBlock() = 0;
 	virtual unsigned int getSampleRate() const = 0;
 	virtual unsigned int getChannels() const = 0;
+
+	/**
+	 * @brief Make captureBlock() return an empty buffer. Safe to call from any thread.
+	 */
+	virtual void stop() { m_stopped = true; }
+
+protected:
+	std::atomic<bool> m_stopped { false };
 };
 
 class FileCapture : public AudioSource
 {
 private:
-	// Removed AppConfig m_config
-	// Use individual members instead:
 	std::string m_filePath;
 	unsigned int m_periodSize;
 	unsigned int m_channels;
 	unsigned int m_sampleRate;
 	WavReader m_file;
 	bool m_initialized;
+	bool m_realtime;
+	std::size_t m_framesDelivered;
+	std::chrono::steady_clock::time_point m_startTime;
 
 public:
 	/**
 	 * @brief Constructor for FileCapture.
 	 * @param captureDevice Path to audio file (may include a "file://" prefix).
 	 * @param periodSize Number of frames per capture block.
+	 * @param realtime Deliver blocks at the file's sample rate instead of as fast as possible.
 	 */
-	FileCapture(const std::string &captureDevice, unsigned int periodSize)
-		: m_periodSize(periodSize)
-		, m_initialized(false)
-	{
-		// Remove "file://" prefix if present.
-		m_filePath = captureDevice;
-		const std::string prefix = "file://";
-		if (m_filePath.find(prefix) == 0)
-			m_filePath = m_filePath.substr(prefix.size());
-
-		if (!m_file.open(m_filePath)) {
-			DBG_ERROR("Cannot open audio file: " << m_filePath);
-			return;
-		}
-
-		// Override file properties.
-		m_channels = m_file.getChannels();
-		m_sampleRate = m_file.getSampleRate();
-		m_initialized = true;
-
-		DBG_INFO("Opened audio file: " << m_filePath);
-		DBG_INFO("Sample rate: " << m_sampleRate << " Hz");
-		DBG_INFO("Channels: " << m_channels);
-	}
+	FileCapture(const std::string &captureDevice, unsigned int periodSize, bool realtime = false);
 
 	bool isInitialized() const override { return m_initialized; }
-
-	std::vector<float> captureBlock() override
-	{
-		std::vector<float> output;
-		output.resize(m_periodSize * m_channels, 0.0f);
-
-		if (!isInitialized()) {
-			// Return empty buffer to signalize EOF
-			return std::vector<float>();
-		}
-
-
-		std::size_t framesRead = m_file.readFrames(output.data(), m_periodSize);
-		if (framesRead == 0) {
-			// End of file. return empty buffer.
-			return std::vector<float>();
-		}
-
-		output.resize(framesRead * m_channels);
-		return output;
-	}
-
+	std::vector<float> captureBlock() override;
 	unsigned int getSampleRate() const override { return m_sampleRate; }
-
 	unsigned int getChannels() const override { return m_channels; }
 };
 
-class AlsaCapture : public AudioSource
+/**
+ * @brief Captures audio from a sound card through miniaudio.
+ */
+class DeviceCapture : public AudioSource
 {
-private:
-	std::string m_device;
-	unsigned int m_channels;
-	snd_pcm_format_t m_format;
-	unsigned int m_sampleRate;
-	snd_pcm_uframes_t m_periodSize;
-	unsigned int m_periods;
-	snd_pcm_t *m_handle;
-	std::vector<uint8_t> m_buffer;
-	unsigned int m_frameSize;
-	bool m_initialized;
-
 public:
 	/**
-	 * @brief Constructor for AlsaCapture.
-	 * @param device ALSA device name.
+	 * @brief Constructor for DeviceCapture.
+	 * @param device Device specification, see AudioDevices.
 	 * @param channels Number of channels to capture.
-	 * @param format Sample format.
 	 * @param sampleRate Desired sample rate.
 	 * @param periodSize Period size in frames.
 	 * @param periods Number of periods.
 	 */
-	AlsaCapture(const std::string &device, unsigned int channels, snd_pcm_format_t format, unsigned int sampleRate, unsigned int periodSize,
-				unsigned int periods)
-		: m_device(device)
-		, m_channels(channels)
-		, m_format(format)
-		, m_sampleRate(sampleRate)
-		, m_periodSize(periodSize)
-		, m_periods(periods)
-		, m_handle(nullptr)
-		, m_frameSize(0)
-		, m_initialized(false)
-	{
-		int err;
-		if ((err = snd_pcm_open(&m_handle, m_device.c_str(), SND_PCM_STREAM_CAPTURE, 0)) < 0) {
-			DBG_ERROR("Cannot open audio device: " << m_device << " (" << std::string(snd_strerror(err)) << ")");
-			return;
-		}
+	DeviceCapture(const std::string &device, unsigned int channels, unsigned int sampleRate, unsigned int periodSize,
+				  unsigned int periods);
+	~DeviceCapture() override;
 
-		snd_pcm_hw_params_t *hw_params;
-		snd_pcm_hw_params_alloca(&hw_params);
-
-		if ((err = snd_pcm_hw_params_any(m_handle, hw_params)) < 0) {
-			DBG_ERROR("Cannot initialize hw params: " << std::string(snd_strerror(err)));
-			return;
-		}
-
-		if ((err = snd_pcm_hw_params_set_access(m_handle, hw_params, SND_PCM_ACCESS_RW_INTERLEAVED)) < 0) {
-			DBG_ERROR("Cannot set access type: " << std::string(snd_strerror(err)));
-			return;
-		}
-
-		if ((err = snd_pcm_hw_params_set_format(m_handle, hw_params, m_format)) < 0) {
-			DBG_ERROR("Cannot set sample format: " << std::string(snd_strerror(err)));
-			return;
-		}
-
-		if ((err = snd_pcm_hw_params_set_channels(m_handle, hw_params, m_channels)) < 0) {
-			DBG_ERROR("Cannot set channel count: " << std::string(snd_strerror(err)));
-			return;
-		}
-
-		unsigned int rate = m_sampleRate;
-		if ((err = snd_pcm_hw_params_set_rate_near(m_handle, hw_params, &rate, 0)) < 0) {
-			DBG_ERROR("Cannot set sample rate: " << std::string(snd_strerror(err)));
-			return;
-		}
-		m_sampleRate = rate;
-
-		if ((err = snd_pcm_hw_params_set_period_size_near(m_handle, hw_params, &m_periodSize, 0)) < 0) {
-			DBG_ERROR("Cannot set period size: " << std::string(snd_strerror(err)));
-			return;
-		}
-
-		if ((err = snd_pcm_hw_params_set_periods_near(m_handle, hw_params, &m_periods, 0)) < 0) {
-			DBG_ERROR("Cannot set periods: " << std::string(snd_strerror(err)));
-			return;
-		}
-
-		if ((err = snd_pcm_hw_params(m_handle, hw_params)) < 0) {
-			DBG_ERROR("Cannot set parameters: " << std::string(snd_strerror(err)));
-			return;
-		}
-
-		m_frameSize = (snd_pcm_format_width(m_format) / 8) * m_channels;
-		m_buffer.resize(m_periodSize * m_frameSize);
-		m_initialized = true;
-	}
-
-	~AlsaCapture()
-	{
-		if (m_handle) {
-			snd_pcm_close(m_handle);
-		}
-	}
-
-	bool isInitialized() const override { return m_handle != nullptr && m_frameSize > 0 && m_initialized; }
-
-	std::vector<float> captureBlock() override
-	{
-		std::vector<float> floatBuffer;
-		if (!isInitialized()) {
-			DBG_ERROR("AlsaCapture not properly initialized");
-			floatBuffer.resize(m_periodSize * m_channels, 0.0f);
-			return floatBuffer;
-		}
-
-		int err = snd_pcm_readi(m_handle, m_buffer.data(), m_periodSize);
-		if (err == -EPIPE) {
-			DBG_WARN("Buffer overrun detected, recovering...");
-			snd_pcm_prepare(m_handle);
-			floatBuffer.resize(m_periodSize * m_channels, 0.0f);
-			return floatBuffer;
-		}
-		else if (err < 0) {
-			DBG_ERROR("Error reading from PCM device: " << std::string(snd_strerror(err)));
-			floatBuffer.resize(m_periodSize * m_channels, 0.0f);
-			return floatBuffer;
-		}
-
-		const uint8_t *src = m_buffer.data();
-
-		std::vector<float> multiBuffer(err * m_channels, 0.0f);
-		for (size_t i = 0; i < static_cast<size_t>(err); ++i) {
-			for (unsigned int ch = 0; ch < m_channels; ++ch) {
-				switch (m_format) {
-				case SND_PCM_FORMAT_S16_LE: {
-					const int16_t *samples = reinterpret_cast<const int16_t *>(src);
-					multiBuffer[i * m_channels + ch] = samples[i * m_channels + ch] / 32768.0f;
-					break;
-				}
-				case SND_PCM_FORMAT_S32_LE: {
-					const int32_t *samples = reinterpret_cast<const int32_t *>(src);
-					multiBuffer[i * m_channels + ch] = samples[i * m_channels + ch] / 2147483648.0f;
-					break;
-				}
-				case SND_PCM_FORMAT_FLOAT_LE: {
-					const float *samples = reinterpret_cast<const float *>(src);
-					multiBuffer[i * m_channels + ch] = samples[i * m_channels + ch];
-					break;
-				}
-				default:
-					DBG_ERROR("Unsupported format");
-					return multiBuffer;
-				}
-			}
-		}
-		return multiBuffer;
-	}
-
+	bool isInitialized() const override;
+	std::vector<float> captureBlock() override;
 	unsigned int getSampleRate() const override { return m_sampleRate; }
-
 	unsigned int getChannels() const override { return m_channels; }
+
+private:
+	struct Impl;
+	std::unique_ptr<Impl> m_impl;
+	unsigned int m_channels;
+	unsigned int m_sampleRate;
+	unsigned int m_periodSize;
 };

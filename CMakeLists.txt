@@ -16,8 +16,6 @@ option(SYNCCHECK_BUILD_TOOLS "Build command line tools" ON)
 option(SYNCCHECK_BUILD_TESTS "Build test programs" ON)
 option(SYNCCHECK_BUILD_ALSA_PLUGIN "Build the ALSA bandmover plugin (Linux only)" OFF)
 
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(ALSA REQUIRED IMPORTED_TARGET alsa)
 
 set(syncCheck_PUBLIC_HEADERS
 	dsp/BandProcessor.h
@@ -38,9 +36,12 @@ set(syncCheck_HEADERS
 	dsp/KissFFTComplexWrapper.h
 	dsp/HilbertShifter.h
 	utils/Logger.h
+	utils/AudioDevice.h
+	utils/AudioDeviceImpl.h
 	utils/AudioInput.h
 	utils/AudioOutput.h
 	utils/DelayStatsVisualizer.h
+	analyzer/SyncAnalyzer.h
 	utils/WavFile.h
 )
 
@@ -58,6 +59,10 @@ set(syncCheck_SOURCES
 	dsp/HilbertShifter.cpp
 	utils/Logger.cpp
 	utils/WavFile.cpp
+	utils/AudioDevice.cpp
+	utils/AudioInput.cpp
+	utils/AudioOutput.cpp
+	analyzer/SyncAnalyzer.cpp
 	utils/MiniaudioImpl.c
 	kissfft/kiss_fft.c
 	kissfft/kiss_fftr.c
@@ -74,6 +79,7 @@ target_include_directories(synccheck PUBLIC
 	${CMAKE_CURRENT_SOURCE_DIR}/dsp
 	${CMAKE_CURRENT_SOURCE_DIR}/utils
 	${CMAKE_CURRENT_SOURCE_DIR}/kissfft
+	${CMAKE_CURRENT_SOURCE_DIR}/analyzer
 )
 target_include_directories(synccheck PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/miniaudio)
 find_package(Threads REQUIRED)
@@ -95,11 +101,13 @@ install(TARGETS synccheck
 )
 
 if(SYNCCHECK_BUILD_TOOLS)
-	add_executable(sync_analyzer syncAnalyzer.cpp)
-	target_link_libraries(sync_analyzer PRIVATE synccheck PkgConfig::ALSA)
+	add_executable(sync_analyzer apps/cli/syncAnalyzer.cpp)
+	target_link_libraries(sync_analyzer PRIVATE synccheck)
+	target_include_directories(sync_analyzer PRIVATE third_party/CLI11)
 
-	add_executable(sync_generator syncGenerator.cpp)
+	add_executable(sync_generator apps/cli/syncGenerator.cpp)
 	target_link_libraries(sync_generator PRIVATE synccheck)
+	target_include_directories(sync_generator PRIVATE third_party/CLI11)
 
 	install(TARGETS sync_analyzer sync_generator DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif()
@@ -116,9 +124,12 @@ if(SYNCCHECK_BUILD_TESTS)
 
 	add_executable(hilbert_test test/hilbertTest.cpp)
 	target_link_libraries(hilbert_test PRIVATE synccheck)
+	target_include_directories(hilbert_test PRIVATE third_party/CLI11)
 endif()
 
 if(SYNCCHECK_BUILD_ALSA_PLUGIN)
+	find_package(PkgConfig REQUIRED)
+	pkg_check_modules(ALSA REQUIRED IMPORTED_TARGET alsa)
 	add_library(asound_module_pcm_bandmover MODULE alsa-plugin/pcm_bandmover.cpp)
 	target_compile_definitions(asound_module_pcm_bandmover PRIVATE PIC)
 	target_link_libraries(asound_module_pcm_bandmover PRIVATE synccheck PkgConfig::ALSA ${CMAKE_DL_LIBS})

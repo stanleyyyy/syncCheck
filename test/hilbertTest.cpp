@@ -4,7 +4,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <algorithm>
-#include <getopt.h>
+#include "CLI11.hpp"
 #include "Logger.h"
 #include "HilbertShifter.h"
 #include "WavFile.h"
@@ -47,74 +47,25 @@ struct AppConfig
 	unsigned int m_overlapPercent = 75;
 };
 
-void signalHandler(int signum)
+bool parseCommandLine(int argc, char *argv[], AppConfig &config, int &exitCode)
 {
-	// Handle signal
-}
+	CLI::App app { "Frequency shifts a WAV file with HilbertShifter and shifts it back." };
+	app.option_defaults()->always_capture_default();
 
-void printUsage(const char *programName)
-{
-	DBG_INFO("Usage: " << programName << " [options] input.wav\n"
-			  << "Options:\n"
-			  << "      --block-size=NUM   FFT block size (default: 8192)\n"
-			  << "      --overlap=NUM      Overlap percent (50 or 75, default: 75)\n"
-			  << "      --start-freq=NUM   Start frequency in Hz (default: 0)\n"
-			  << "      --stop-freq=NUM    Stop frequency in Hz (default: 2000)\n"
-			  << "      --target-freq=NUM  Target start frequency in Hz (default: 12000)\n"
-			  << "  -h, --help            Show this help message\n");
-}
+	app.add_option("input", config.m_inputFile, "Input WAV file")->required();
+	app.add_option("--block-size", config.m_blockSize, "FFT block size")->check(CLI::PositiveNumber);
+	app.add_option("--overlap", config.m_overlapPercent, "Overlap percent")->check(CLI::IsMember({ 50, 75 }));
+	app.add_option("--start-freq", config.m_startFreq, "Start frequency in Hz");
+	app.add_option("--stop-freq", config.m_stopFreq, "Stop frequency in Hz");
+	app.add_option("--target-freq", config.m_targetStart, "Target start frequency in Hz");
 
-std::pair<bool, AppConfig> parseCommandLine(int argc, char *argv[])
-{
-	AppConfig config;
-
-	static struct option long_options[] = {
-		{ "block-size",		required_argument, 0, 1 },
-		{ "overlap",		required_argument, 0, 2 },
-		{ "start-freq",		required_argument, 0, 3 },
-		{ "stop-freq",		required_argument, 0, 4 },
-		{ "target-freq",	required_argument, 0, 5 },
-		{ "help",			no_argument,	   0, 'h' },
-		{ 0, 0, 0, 0 }
-	};
-
-	int opt;
-	while ((opt = getopt_long(argc, argv, "h", long_options, nullptr)) != -1) {
-		switch (opt) {
-		case 1: // block-size
-			config.m_blockSize = std::stoi(optarg);
-			break;
-		case 2: // overlap
-			config.m_overlapPercent = std::stoi(optarg);
-			if (config.m_overlapPercent != 50 && config.m_overlapPercent != 75) {
-				DBG_ERROR("Invalid overlap percent. Must be 50 or 75");
-				return { false, config };
-			}
-			break;
-		case 3: // start-freq
-			config.m_startFreq = std::stof(optarg);
-			break;
-		case 4: // stop-freq
-			config.m_stopFreq = std::stof(optarg);
-			break;
-		case 5: // target-freq
-			config.m_targetStart = std::stof(optarg);
-			break;
-		case 'h':
-			return { false, config };
-		default:
-			return { false, config };
-		}
+	try {
+		app.parse(argc, argv);
+	} catch (const CLI::ParseError &e) {
+		exitCode = app.exit(e);
+		return false;
 	}
-
-	// Get input filename from remaining argument
-	if (optind >= argc) {
-		DBG_ERROR("Input WAV file must be specified");
-		return { false, config };
-	}
-	config.m_inputFile = argv[optind];
-
-	return { true, config };
+	return true;
 }
 
 /**
@@ -166,15 +117,10 @@ bool saveWav(const string &filename, int sampleRate, const vector<float> &data, 
  */
 int main(int argc, char *argv[])
 {
-	if (argc < 2) {
-		printUsage(argv[0]);
-		return 1;
-	}
-
-	auto [configValid, config] = parseCommandLine(argc, argv);
-	if (!configValid) {
-		printUsage(argv[0]);
-		return 1;
+	AppConfig config;
+	int exitCode = 0;
+	if (!parseCommandLine(argc, argv, config, exitCode)) {
+		return exitCode;
 	}
 
 	int sampleRate;
