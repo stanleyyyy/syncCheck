@@ -1,5 +1,6 @@
 #include "SyncAnalyzer.h"
 #include "TestSignalGenerator.h"
+#include "NoiseSignalGenerator.h"
 #include "WavFile.h"
 #include "Logger.h"
 #include <cmath>
@@ -114,12 +115,46 @@ static void testMultichannelMode()
 	std::remove(file.c_str());
 }
 
+/**
+ * @brief Source mappings that are not 0,1,2,... (e.g. "2,3") compare the right physical channels.
+ */
+static void testNonIdentityMapping()
+{
+	const std::vector<float> delays = { 0.0f, 1.0f, -2.5f, 0.375f };
+	const std::vector<float> signal = generateNoiseTestSignal(4, 48000, 10.0f, delays);
+
+	const std::string file = "syncAnalyzerTest_mapping.wav";
+	{
+		WavWriter writer;
+		check(writer.open(file, 4, 48000), "cannot write " + file);
+		writer.writeFrames(signal.data(), signal.size() / 4);
+	}
+
+	SyncAnalyzerSettings settings = defaultSettings(file);
+	settings.m_numBands = 1;
+	settings.m_startFreq = 200;
+	settings.m_freqRange = 19800;
+	settings.m_sources = "2,3";
+	const SyncAnalyzerSnapshot snapshot = analyze(settings);
+	check(snapshot.m_results.size() == 1, "unexpected number of results for mapping 2,3");
+	for (const auto &result : snapshot.m_results) {
+		const auto &report = result.m_report;
+		DBG_INFO("channel " << report.assignment.refChannel << " -> " << report.assignment.sigChannel << ": "
+			<< report.filteredDelay << " ms (expected 2.875 ms)");
+		check(report.assignment.refChannel == 2 && report.assignment.sigChannel == 3, "mapping 2,3 channels");
+		check(std::fabs(report.filteredDelay - 2.875f) < 0.02f, "mapping 2,3 delay");
+		check(!result.m_correlation.empty(), "missing correlation data");
+	}
+	std::remove(file.c_str());
+}
+
 int main()
 {
 	Logger::getInstance().setLogLevel(LOG_WARNING);
 
 	testMixMode();
 	testMultichannelMode();
+	testNonIdentityMapping();
 
 	if (g_failures) {
 		DBG_ERROR(g_failures << " check(s) failed");

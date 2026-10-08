@@ -128,8 +128,10 @@ bool SyncAnalyzer::run(const SyncAnalyzerSettings &settings, const StatsCallback
 	// Initialize FFTSyncCheck.
 	FFTSyncCheck syncChecker(syncConfig);
 
-	// Setup channel assignments.
+	// Setup channel assignments. 'assignments' uses physical channels, 'checkerAssignments'
+	// uses the columns of the processing buffer that FFTSyncCheck works on.
 	std::vector<FFTSyncCheck::ChannelAssignment> assignments;
+	std::vector<FFTSyncCheck::ChannelAssignment> checkerAssignments;
 	if (!multichannel)
 	{
 		// Create default channel assignments for mix mode.
@@ -143,8 +145,9 @@ bool SyncAnalyzer::run(const SyncAnalyzerSettings &settings, const StatsCallback
 			assign.refBand = 0;
 			assignments.push_back(assign);
 		}
+		checkerAssignments = assignments;
 		syncChecker.setMultiChannelMode(1);
-		syncChecker.setChannelAssignments(assignments);
+		syncChecker.setChannelAssignments(checkerAssignments);
 	}
 	else
 	{
@@ -157,8 +160,13 @@ bool SyncAnalyzer::run(const SyncAnalyzerSettings &settings, const StatsCallback
 				return false;
 			}
 		}
+		// Column m of the processing buffer holds the signal channel of assignment m,
+		// column 0 holds the reference.
+		for (std::size_t m = 0; m < assignments.size(); m++) {
+			checkerAssignments.push_back({ 0, assignments[m].refBand, m, assignments[m].sigBand });
+		}
 		syncChecker.setMultiChannelMode(assignments.size());
-		syncChecker.setChannelAssignments(assignments);
+		syncChecker.setChannelAssignments(checkerAssignments);
 	}
 
 	// Allocate processing buffer.
@@ -263,13 +271,16 @@ bool SyncAnalyzer::run(const SyncAnalyzerSettings &settings, const StatsCallback
 			snapshot.m_sequence++;
 			snapshot.m_timestamp = totalTime;
 			snapshot.m_results.clear();
-			for (const auto &report : syncChecker.getDelayStats()) {
-				const auto &assign = report.assignment;
+			const auto reports = syncChecker.getDelayStats();
+			for (std::size_t i = 0; i < reports.size() && i < assignments.size(); i++) {
+				const auto &assign = checkerAssignments[i];
 				// Skip self-assignments
 				if (assign.refChannel == assign.sigChannel && assign.refBand == assign.sigBand) {
 					continue;
 				}
-				snapshot.m_results.push_back({ report, syncChecker.getCorrelationData(assign) });
+				SyncAnalyzerResult result { reports[i], syncChecker.getCorrelationData(assign) };
+				result.m_report.assignment = assignments[i];
+				snapshot.m_results.push_back(result);
 			}
 			if (onStats) {
 				onStats(snapshot);
