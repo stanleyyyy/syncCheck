@@ -81,8 +81,17 @@ export class Timeline {
 		this.frozenY = null;
 		this.unfreezeTimer = null;
 		this.charts = [];
+		this.reserveHeights();
 		new ResizeObserver(() => this.resize()).observe(delayEl);
 		window.addEventListener('resize', () => this.resize());
+	}
+
+	// Keep the chart areas their size while there are no charts yet.
+	reserveHeights() {
+		fitHeights();
+		this.delayEl.style.minHeight = `${HEIGHT.delay}px`;
+		this.metricEl.style.minHeight = `${HEIGHT.metric}px`;
+		this.overviewEl.style.minHeight = `${HEIGHT.overview}px`;
 	}
 
 	setPairs(labels) {
@@ -423,7 +432,7 @@ export class Timeline {
 	resize() {
 		const width = this.delayEl.clientWidth;
 		if (!width) return;
-		fitHeights();
+		this.reserveHeights();
 		this.delay?.setSize({ width, height: HEIGHT.delay });
 		this.metricChart?.setSize({ width, height: HEIGHT.metric });
 		this.overview?.setSize({ width, height: HEIGHT.overview });

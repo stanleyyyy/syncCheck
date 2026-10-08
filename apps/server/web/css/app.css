@@ -195,20 +195,25 @@ h3 { font-size: 13px; font-weight: 600; margin: 0 0 6px; color: var(--ink-2); }
 }
 
 /* Pair cards: one compact row per pair, they are also the legend */
-.pairs { display: flex; flex-wrap: wrap; gap: 8px; }
+.pairs { display: flex; flex-wrap: wrap; gap: 8px; min-height: 56px; }
 .card {
 	display: flex;
 	align-items: center;
 	gap: 14px;
-	padding: 8px 14px;
+	height: 56px;
+	padding: 0 14px;
 	background: var(--surface);
 	border: 1px solid var(--border);
 	border-radius: var(--radius);
-	min-width: 0;
+	box-sizing: border-box;
+	flex: none;
 }
 .card .label { display: flex; align-items: center; gap: 8px; color: var(--ink-2); font-size: 13px; white-space: nowrap; }
 .key { width: 16px; height: 3px; border-radius: 2px; flex: none; display: inline-block; }
-.card .value { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.card .value { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; min-width: 6.5ch; text-align: right; }
+.card .meta { min-width: 17em; }
+.quality { min-width: 4.5em; }
+.quality[data-q="none"] .icon { background: var(--grid); }
 .card .value small { font-size: 13px; font-weight: 400; color: var(--ink-2); margin-left: 2px; }
 .card .meta { color: var(--ink-2); font-size: 12px; font-variant-numeric: tabular-nums; line-height: 1.35; white-space: nowrap; }
 .quality { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--ink-2); white-space: nowrap; }
@@ -228,7 +233,7 @@ h3 { font-size: 13px; font-weight: 600; margin: 0 0 6px; color: var(--ink-2); }
 .metric-head { display: flex; align-items: center; gap: 10px; }
 #timelinePanel .hint { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .playback select { height: 26px; width: auto; font-size: 13px; }
-.keys { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--ink-2); margin-top: 2px; }
+.keys { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--ink-2); margin-top: 2px; min-height: 18px; }
 .keys span { display: inline-flex; align-items: center; gap: 6px; }
 
 /* Segmented controls and toggles */
@@ -330,7 +335,8 @@ details.advanced summary { cursor: pointer; font-weight: 600; font-size: 13px; }
 html { scrollbar-gutter: stable; }
 .btn.icon { width: 32px; padding: 0; justify-content: center; flex: none; }
 .app-body { display: grid; grid-template-columns: auto minmax(0, 1fr); }
-main { container-type: inline-size; min-width: 0; width: 100%; box-sizing: border-box; }
+/* Rows stay at their content height; the sidebar makes this area at least one screen tall. */
+main { container-type: inline-size; min-width: 0; width: 100%; box-sizing: border-box; align-content: start; }
 .sidebar {
 	position: sticky;
 	top: 53px;
@@ -382,12 +388,15 @@ main { container-type: inline-size; min-width: 0; width: 100%; box-sizing: borde
 .session .more:hover, .session .more[aria-expanded="true"] { background: var(--hover); color: var(--ink); }
 .session .details { grid-column: -3 / -1; color: var(--ink-2); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; height: 17px; }
 .session .tags { grid-column: -3 / -1; display: flex; gap: 4px; align-items: center; height: 20px; overflow: hidden; margin-top: 3px; }
-.tag { display: inline-flex; align-items: center; gap: 2px; font-size: 11px; padding: 0 3px 0 7px; border-radius: 9px; background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--ink); cursor: pointer; white-space: nowrap; }
+.tag { display: inline-flex; align-items: center; gap: 2px; height: 18px; font-size: 11px; padding: 0 3px 0 7px; border-radius: 9px; border: 1px solid var(--border); background: var(--surface-raised); color: var(--ink-2); cursor: pointer; white-space: nowrap; box-sizing: border-box; }
+.tag:hover { color: var(--ink); }
 .tag button { border: 0; background: none; color: var(--muted); cursor: pointer; padding: 0 2px; font-size: 12px; line-height: 1; }
 .tag button:hover { color: var(--critical); }
-.add-tag { font-size: 11px; border: 1px dashed var(--border); border-radius: 9px; background: none; color: var(--muted); cursor: pointer; padding: 0 7px; visibility: hidden; white-space: nowrap; }
+.add-tag { height: 18px; font-size: 11px; border: 1px dashed var(--border); border-radius: 9px; background: none; color: var(--muted); cursor: pointer; padding: 0 7px; visibility: hidden; white-space: nowrap; box-sizing: border-box; }
 .session:hover .add-tag { visibility: visible; }
-.tags input { height: 20px; width: 110px; font-size: 11px; padding: 0 6px; border-radius: 9px; }
+/* The tag field looks like a chip; no focus outline, the row would clip it. */
+.tags input[type="text"] { height: 18px; width: 120px; font-size: 11px; padding: 0 7px; border-radius: 9px; border: 1px solid var(--ink-2); background: var(--surface-raised); box-sizing: border-box; }
+.tags input[type="text"]:focus-visible { outline: none; }
 .session .menu-list { top: 30px; right: 6px; z-index: 5; min-width: 200px; }
 .menu-list hr { border: 0; border-top: 1px solid var(--border); margin: 4px 0; }
 .menu-list .danger { color: var(--critical); }

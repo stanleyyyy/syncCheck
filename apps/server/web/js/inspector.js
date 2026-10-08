@@ -81,6 +81,8 @@ export class Inspector {
 		this.labels = labels;
 		this.maxLag = maxLagMs || this.maxLag;
 		this.clear();
+		// Rows in place before the first data, so the panel does not grow later.
+		this.renderTable({ pairs: labels.map(() => ({ delay: NaN, pslr: NaN })) });
 	}
 
 	// Keep the chart areas their size before data arrives, so the page does not jump.
@@ -88,7 +90,7 @@ export class Inspector {
 		fitHeight();
 		this.corrEl.style.minHeight = `${HEIGHT.value}px`;
 		this.waveEl.style.minHeight = `${HEIGHT.value}px`;
-		this.overviewEl.style.minHeight = `${OVERVIEW_HEIGHT}px`;
+		this.overviewEl.style.minHeight = `${OVERVIEW_HEIGHT + 5}px`;
 	}
 
 	// Parameters for /api/inspect: the visible ranges plus a margin on both sides, so dragging shows data right away.
@@ -421,7 +423,7 @@ export class Inspector {
 		const rows = result.pairs.map((p, i) => el('tr', {},
 			el('td', {}, el('span', { class: 'row-inline' }, el('span', { class: 'key', style: `background:${seriesColor(i)}` }), this.labels[i] || '')),
 			el('td', { class: 'right', text: `${formatMs(p.delay)} ms` }),
-			el('td', { class: 'right', text: `${p.pslr.toFixed(1)} dB` })));
+			el('td', { class: 'right', text: Number.isFinite(p.pslr) ? `${p.pslr.toFixed(1)} dB` : '– dB' })));
 		this.tableEl.replaceChildren(el('thead', {}, head), el('tbody', {}, rows));
 	}
 

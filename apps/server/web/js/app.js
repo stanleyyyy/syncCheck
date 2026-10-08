@@ -100,7 +100,8 @@ function updateCards() {
 	const container = $('pairs');
 	const store = app.store;
 	if (!app.labels.length) {
-		container.replaceChildren();
+		// Session started, pairs not known yet: a placeholder of the same size.
+		container.replaceChildren(...(app.sessionId ? [el('div', { class: 'card muted', text: 'Waiting for the first measurement…' })] : []));
 		return;
 	}
 	const index = app.selection !== null ? nearestIndex(app.selection) : store.t.length - 1;
@@ -117,10 +118,11 @@ function updateCards() {
 		return el('div', { class: 'card' },
 			el('div', { class: 'label' }, el('span', { class: 'key', style: `background:${seriesColor(i)}` }), label),
 			el('div', { class: 'value' }, has ? formatMs(delay) : '–', el('small', { text: 'ms' })),
+			// Same lines before and after the first values, so the card keeps its size.
 			el('div', { class: 'meta' },
-				el('div', { text: has ? `${(confidence * 100).toFixed(0)} % · PSLR ${pslr.toFixed(1)} dB` : 'waiting for data' }),
-				el('div', { text: Number.isFinite(drift) ? `drift ${formatMs(drift, 3)} ms/min in view` : '' })),
-			has ? el('span', { class: 'quality', 'data-q': q.key }, el('span', { class: 'icon' }), q.label) : null);
+				el('div', { text: has ? `${(confidence * 100).toFixed(0)} % · PSLR ${pslr.toFixed(1)} dB` : '– % · PSLR – dB' }),
+				el('div', { text: `drift ${Number.isFinite(drift) ? formatMs(drift, 3) : '–'} ms/min in view` })),
+			el('span', { class: 'quality', 'data-q': has ? q.key : 'none' }, el('span', { class: 'icon' }), has ? q.label : '–'));
 	}));
 }
 
@@ -161,8 +163,9 @@ function updateRangeButtons() {
 	}
 }
 
+// The layout is shown as soon as there is a session, so it does not jump when the first data arrives.
 function updateVisibility() {
-	const hasData = app.labels.length > 0;
+	const hasData = app.sessionId > 0;
 	$('empty').classList.toggle('hidden', hasData);
 	$('pairs').classList.toggle('hidden', !hasData);
 	$('workspace').classList.toggle('hidden', !hasData);
