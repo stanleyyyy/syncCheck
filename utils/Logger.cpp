@@ -1,7 +1,6 @@
 #include "Logger.h"
 #include <cstdio>
 #include <ctime>
-#include <sys/time.h>
 #include <chrono>
 #include <iomanip>
 #include <sstream>

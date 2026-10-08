@@ -53,7 +53,6 @@ set(syncCheck_SOURCES
 	dsp/SyncCheckConfig.cpp
 	dsp/TestSignalGenerator.cpp
 	dsp/NoiseSignalGenerator.cpp
-	dsp/SyncSignalGenerator.cpp
 	dsp/STFTProcessor.cpp
 	dsp/STFTWindowGenerator.cpp
 	dsp/KissFFTWrapper.cpp

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <bitset>
 #include <cstdint>
 #include <vector>
 #include <iostream>
@@ -124,7 +125,7 @@ private:
 	{
 		uint32_t result = 0;
 		for (int i = 0; i < BIT_WIDTH; i++) {
-			int parity = __builtin_popcount(M[i] & v) & 1;
+			int parity = std::bitset<32>(M[i] & v).count() & 1;
 			result |= (parity << i);
 		}
 		return result;
@@ -231,5 +232,13 @@ private:
 	Type m_currentValue;       // Store current PRN value
 };
 
+// Defined here, inline: MSVC does not link an explicit specialization defined in a separate source file.
 template<>
-float SyncSignalGenerator<float>::assignValue(uint32_t value);
+inline float SyncSignalGenerator<float>::assignValue(uint32_t value)
+{
+	// First center around 0 by subtracting half range (2^(bitWidth-1))
+	// Then divide by half range to normalize to [-1,1]
+	int32_t centered = static_cast<int32_t>(value) - (1 << (m_bitWidth - 1));
+	float normalized = static_cast<float>(centered) / (1 << (m_bitWidth - 1));
+	return normalized;
+}
