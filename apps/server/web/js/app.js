@@ -24,13 +24,13 @@ const app = {
 };
 
 const timeline = new Timeline({
-	delayEl: $('delayChart'), metricEl: $('metricChart'), overviewEl: $('overviewChart'),
+	delayEl: $('delayChart'), metricEl: $('metricChart'), overviewEl: $('overviewChart'), delayScaleEl: $('delayScale'),
 	onSelect: (time) => select(time),
 	onFollowChange: (follow) => { $('follow').checked = follow; updateRangeButtons(); updateCards(); },
 });
 const inspector = new Inspector({
 	corrEl: $('corrChart'), waveEl: $('waveChart'), overviewEl: $('waveOverview'), keysEl: $('waveKeys'), tableEl: $('inspectTable'), noAudioEl: $('noAudio'),
-	corrReadout: $('corrReadout'), waveReadout: $('waveReadout'),
+	corrReadout: $('corrReadout'), waveReadout: $('waveReadout'), waveScaleEl: $('waveScale'),
 	// immediate: while dragging (already throttled by the inspector)
 	onViewChange: (immediate) => (immediate ? inspect() : scheduleInspect(150, true)),
 	// A click on the waveform inspects that moment.

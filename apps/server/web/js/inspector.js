@@ -6,6 +6,7 @@ import { chartColors, seriesColor } from './theme.js';
 import { formatMs, el } from './format.js';
 import { bindGestures } from './gestures.js';
 import { setChartSize, viewportHeight } from './layout.js';
+import { VerticalScale } from './vscale.js';
 
 const FONT = '12px system-ui, -apple-system, "Segoe UI", sans-serif';
 const HEIGHT = { value: 190 };
@@ -48,7 +49,7 @@ function verticalLine(u, x, color, dash) {
 }
 
 export class Inspector {
-	constructor({ corrEl, waveEl, overviewEl, keysEl, tableEl, noAudioEl, corrReadout, waveReadout, onViewChange, onSelect, levels }) {
+	constructor({ corrEl, waveEl, overviewEl, keysEl, tableEl, noAudioEl, corrReadout, waveReadout, waveScaleEl, onViewChange, onSelect, levels }) {
 		this.corrEl = corrEl;
 		this.waveEl = waveEl;
 		this.overviewEl = overviewEl;
@@ -69,6 +70,7 @@ export class Inspector {
 		this.corrFollow = true;
 		this.resetWaveState();
 		this.frozenWaveY = null;
+		this.waveScale = new VerticalScale(waveScaleEl, 'waveScale', () => this.applyWaveY());
 		this.wheelTimer = null;
 		this.corr = this.wave = this.overview = null;
 		this.dragTimer = null;
@@ -434,9 +436,31 @@ export class Inspector {
 	}
 
 	waveY(u, min, max) {
-		if (this.frozenWaveY) return this.frozenWaveY;
-		const m = Math.max(Math.abs(min || 0), Math.abs(max || 0), 1e-6) * 1.1;
-		return [-m, m];
+		const symmetric = (m) => { m = Math.max(m, 1e-6) * 1.1; return [-m, m]; };
+		return this.waveScale.range(
+			() => this.frozenWaveY || symmetric(Math.max(Math.abs(min || 0), Math.abs(max || 0))),
+			() => { const peak = this.recordingPeak(); return peak === null ? null : symmetric(peak); });
+	}
+
+	// Largest amplitude of the shown channels in the whole recording (from the navigator's envelope).
+	recordingPeak() {
+		if (!this.overviewData || !this.overviewData.channels || !this.result) return null;
+		const shown = new Set(this.shownChannels(this.result).map((s) => s.channel));
+		let peak = null;
+		for (const trace of this.overviewData.channels) {
+			if (!shown.has(trace.channel)) continue;
+			for (const v of trace.min) peak = Math.max(peak || 0, Math.abs(v));
+			for (const v of trace.max) peak = Math.max(peak || 0, Math.abs(v));
+		}
+		return peak;
+	}
+
+	// Recompute the vertical scale of the shown data.
+	applyWaveY() {
+		if (!this.wave) return;
+		const manual = this.waveScale.mode === 'manual' && this.waveScale.manual;
+		if (manual) this.wave.setScale('y', { min: manual[0], max: manual[1] });
+		else this.wave.setData(this.wave.data, true);
 	}
 
 	redrawWave() {
@@ -476,6 +500,7 @@ export class Inspector {
 						u.over.addEventListener('wheel', (e) => this.wheel(u, e, (v, f) => this.moveWaveView(v, f), refresh, freeze, unfreeze), { passive: false });
 						this.bindDrag(u, (v, f) => this.moveWaveView(v, f), refresh, freeze, unfreeze, select);
 						u.over.addEventListener('dblclick', () => this.resetWaveform());
+						this.waveScale.bindAxis(u);
 					}],
 				},
 			}, data, this.waveEl);
@@ -532,6 +557,7 @@ export class Inspector {
 			this.overviewData = overview;
 			this.duration = Math.max(this.duration, overview.duration);
 			this.updateOverview();
+			if (this.waveScale.mode === 'recording') this.applyWaveY();
 		} catch (e) {
 			// No audio; the waveform chart says so.
 		} finally {

@@ -3,6 +3,7 @@ import { chartColors, seriesColor } from './theme.js';
 import { formatTime, formatMs, quality, el } from './format.js';
 import { bindGestures } from './gestures.js';
 import { setChartSize, viewportHeight } from './layout.js';
+import { VerticalScale } from './vscale.js';
 
 const FONT = '12px system-ui, -apple-system, "Segoe UI", sans-serif';
 const HEIGHT = { delay: 250, metric: 130, overview: 46 };
@@ -32,6 +33,16 @@ function axes(colors, yLabel, yValues) {
 		{ ...common, grid: { stroke: colors.grid, width: 1 }, label: yLabel, size: 64, labelSize: 18,
 			values: (u, vals, axis, space, incr) => vals.map((v) => yValues(v, Math.max(2, Math.min(4, -Math.floor(Math.log10(incr || 1)))))) },
 	];
+}
+
+// Range around min..max with some margin, at least minSpan tall.
+function fitRange(min, max, minSpan) {
+	if (min === null || max === null) return [0, 1];
+	if (max - min < minSpan) {
+		const center = (min + max) / 2;
+		return [center - minSpan / 2, center + minSpan / 2];
+	}
+	return uPlot.rangeNum(min, max, 0.1, true);
 }
 
 // Tooltip listing every series at the cursor; only on the chart under the mouse.
@@ -71,7 +82,7 @@ function tooltipPlugin(format, unit, note) {
 }
 
 export class Timeline {
-	constructor({ delayEl, metricEl, overviewEl, onSelect, onFollowChange }) {
+	constructor({ delayEl, metricEl, overviewEl, delayScaleEl, onSelect, onFollowChange }) {
 		this.delayEl = delayEl;
 		this.metricEl = metricEl;
 		this.overviewEl = overviewEl;
@@ -87,6 +98,7 @@ export class Timeline {
 		this.playhead = null;
 		this.frozenY = null;
 		this.unfreezeTimer = null;
+		this.delayScale = new VerticalScale(delayScaleEl, 'delayScale', () => this.applyDelayY());
 		this.charts = [];
 		this.reserveHeights();
 		new ResizeObserver(() => this.resize()).observe(delayEl);
@@ -130,7 +142,7 @@ export class Timeline {
 			cursor: cursor(8),
 			plugins: [tooltipPlugin((v) => formatMs(v), 'ms', (pair, idx) => this.qualityNote(pair, idx)), markers,
 				{ hooks: { draw: [(u) => this.drawQuality(u)] } }],
-			hooks: { ready: [(u) => this.bindInteraction(u)] },
+			hooks: { ready: [(u) => this.bindInteraction(u), (u) => this.delayScale.bindAxis(u)] },
 		}, this.chartData('delay'), this.delayEl);
 
 		const metric = METRICS[this.metric];
@@ -165,13 +177,7 @@ export class Timeline {
 	// The y axes fit the visible data, except while dragging or zooming, which would make them jump.
 	yRange(u, min, max, minSpan = 0) {
 		const frozen = this.frozenY && this.frozenY.get(u);
-		if (frozen) return frozen;
-		if (min === null || max === null) return [0, 1];
-		if (max - min < minSpan) {
-			const center = (min + max) / 2;
-			return [center - minSpan / 2, center + minSpan / 2];
-		}
-		return uPlot.rangeNum(min, max, 0.1, true);
+		return frozen || fitRange(min, max, minSpan);
 	}
 
 	freezeY() {
@@ -411,8 +417,41 @@ export class Timeline {
 
 	// Room above the data for the quality strips; the frozen range already has it.
 	delayRange(u, min, max) {
-		const range = this.yRange(u, min, max, 0.1);
-		if (this.frozenY && this.frozenY.get(u)) return range;
+		return this.delayScale.range(() => {
+			const range = this.yRange(u, min, max, 0.1);
+			return this.frozenY && this.frozenY.get(u) ? range : this.withQualityRoom(u, range);
+		}, () => this.wholeDelayRange(u));
+	}
+
+	// All delays of the session.
+	wholeDelayRange(u) {
+		if (!this.store) return null;
+		let min = Infinity, max = -Infinity;
+		for (const pair of this.store.pairs) {
+			for (const v of pair.delay) {
+				if (!Number.isFinite(v)) continue;
+				if (v < min) min = v;
+				if (v > max) max = v;
+			}
+		}
+		if (min > max) return null;
+		return this.withQualityRoom(u, fitRange(min, max, 0.1));
+	}
+
+	// Recompute the vertical scale of the delay chart.
+	applyDelayY() {
+		if (!this.delay) return;
+		const manual = this.delayScale.mode === 'manual' && this.delayScale.manual;
+		if (manual) {
+			this.delay.setScale('y', { min: manual[0], max: manual[1] });
+		} else {
+			// Setting the same x range again does not recompute y; new data does.
+			this.delay.setData(this.delay.data);
+			this.applyRange();
+		}
+	}
+
+	withQualityRoom(u, range) {
 		const strips = this.labels.length * (QUALITY_ROW + QUALITY_GAP) + QUALITY_GAP;
 		const plot = Math.max(u.bbox.height / devicePixelRatio || HEIGHT.delay - 60, strips * 3);
 		return [range[0], range[1] + (range[1] - range[0]) * strips / (plot - strips)];
