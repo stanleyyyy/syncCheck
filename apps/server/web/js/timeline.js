@@ -1,11 +1,15 @@
 // Session timeline: delay chart, one metric chart and an overview navigator, all on the same time axis.
 import { chartColors, seriesColor } from './theme.js';
-import { formatTime, formatMs, el } from './format.js';
+import { formatTime, formatMs, quality, el } from './format.js';
 import { bindGestures } from './gestures.js';
 import { setChartSize, viewportHeight } from './layout.js';
 
 const FONT = '12px system-ui, -apple-system, "Segoe UI", sans-serif';
 const HEIGHT = { delay: 250, metric: 130, overview: 46 };
+// Quality strip per pair along the top of the delay chart (CSS px).
+const QUALITY_ROW = 5;
+const QUALITY_GAP = 2;
+const QUALITY_COLORS = { good: '--good', fair: '--warning', poor: '--critical' };
 
 // The delay chart takes the height the window has left, so the page fits on one screen.
 function fitHeights() {
@@ -31,7 +35,7 @@ function axes(colors, yLabel, yValues) {
 }
 
 // Tooltip listing every series at the cursor; only on the chart under the mouse.
-function tooltipPlugin(format, unit) {
+function tooltipPlugin(format, unit, note) {
 	let tip;
 	return {
 		hooks: {
@@ -53,7 +57,8 @@ function tooltipPlugin(format, unit) {
 					tip.append(el('div', { class: 'row' },
 						el('span', { class: 'key', style: `background:${s._stroke}` }),
 						el('strong', { text: Number.isFinite(value) ? `${format(value)} ${unit}` : '–' }),
-						el('span', { text: s.label })));
+						el('span', { text: s.label }),
+						...(note ? [note(i - 1, idx)] : [])));
 				});
 				tip.classList.remove('hidden');
 				const width = u.over.clientWidth;
@@ -120,10 +125,11 @@ export class Timeline {
 			width, height: HEIGHT.delay, legend: { show: false },
 			series: [{ label: 'Time' }, ...this.labels.map((label, i) => ({ label, stroke: seriesColor(i), width: 2, points: { show: false } }))],
 			// At least 0.1 ms tall, so a steady delay is a flat line instead of magnified noise.
-			scales: { x: { time: false }, y: { range: (u, min, max) => this.yRange(u, min, max, 0.1) } },
+			scales: { x: { time: false }, y: { range: (u, min, max) => this.delayRange(u, min, max) } },
 			axes: axes(colors, 'Delay (ms)', (v, decimals) => formatMs(v, decimals)),
 			cursor: cursor(8),
-			plugins: [tooltipPlugin((v) => formatMs(v), 'ms'), markers],
+			plugins: [tooltipPlugin((v) => formatMs(v), 'ms', (pair, idx) => this.qualityNote(pair, idx)), markers,
+				{ hooks: { draw: [(u) => this.drawQuality(u)] } }],
 			hooks: { ready: [(u) => this.bindInteraction(u)] },
 		}, this.chartData('delay'), this.delayEl);
 
@@ -392,6 +398,63 @@ export class Timeline {
 	}
 
 	// Selected moment (dashed) and playback position (solid).
+	// Quality of a measurement, rated like the pair cards and the command line tool.
+	qualityAt(pair, idx) {
+		const p = this.store && this.store.pairs[pair];
+		return p && idx < p.pslr.length ? quality(p.pslr[idx], p.confidence[idx]) : null;
+	}
+
+	qualityNote(pair, idx) {
+		const q = this.qualityAt(pair, idx);
+		return q ? el('span', { class: 'quality', 'data-q': q.key }, el('span', { class: 'icon' }), q.label) : el('span');
+	}
+
+	// Room above the data for the quality strips; the frozen range already has it.
+	delayRange(u, min, max) {
+		const range = this.yRange(u, min, max, 0.1);
+		if (this.frozenY && this.frozenY.get(u)) return range;
+		const strips = this.labels.length * (QUALITY_ROW + QUALITY_GAP) + QUALITY_GAP;
+		const plot = Math.max(u.bbox.height / devicePixelRatio || HEIGHT.delay - 60, strips * 3);
+		return [range[0], range[1] + (range[1] - range[0]) * strips / (plot - strips)];
+	}
+
+	// One strip per pair along the top: the quality of every measurement in its color.
+	drawQuality(u) {
+		const store = this.store;
+		if (!store || !store.t.length) return;
+		const colors = Object.fromEntries(Object.entries(QUALITY_COLORS).map(([k, v]) =>
+			[k, getComputedStyle(document.documentElement).getPropertyValue(v).trim()]));
+		const t = store.t;
+		const ctx = u.ctx;
+		const left = u.bbox.left, right = u.bbox.left + u.bbox.width;
+		const [from, to] = this.visibleIndexRange();
+		const first = Math.max(0, from - 1), last = Math.min(t.length - 1, to + 1);
+		ctx.save();
+		this.labels.forEach((label, pair) => {
+			const top = u.bbox.top + (QUALITY_GAP + pair * (QUALITY_ROW + QUALITY_GAP)) * devicePixelRatio;
+			let runStart = null, runKey = null;
+			const flush = (end) => {
+				if (runKey === null) return;
+				const x0 = Math.max(left, u.valToPos(t[runStart], 'x', true));
+				const x1 = Math.min(right, u.valToPos(end, 'x', true));
+				if (x1 <= x0) return;
+				ctx.fillStyle = colors[runKey];
+				ctx.fillRect(x0, top, Math.max(x1 - x0, devicePixelRatio), QUALITY_ROW * devicePixelRatio);
+			};
+			for (let i = first; i <= last; i++) {
+				const q = this.qualityAt(pair, i);
+				const key = q ? q.key : null;
+				if (key === runKey) continue;
+				flush(t[i]);
+				runStart = i;
+				runKey = key;
+			}
+			// The last measurement covers one more interval.
+			flush(last + 1 < t.length ? t[last + 1] : t[last] + (last > 0 ? t[last] - t[last - 1] : 0));
+		});
+		ctx.restore();
+	}
+
 	drawMarkers(u, colors) {
 		this.drawLine(u, this.selection, colors.ink2, [4, 3]);
 		this.drawLine(u, this.playhead, colors.accent, []);
