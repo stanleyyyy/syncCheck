@@ -256,6 +256,7 @@ int main(int argc, char *argv[])
 	std::string dataDir = defaultDataDir();
 	std::string webRoot;
 	bool noBrowser = false;
+	bool appMode = false;
 
 	CLI::App app { "Sync analyzer server: measure audio synchronization in a web browser." };
 	app.option_defaults()->always_capture_default();
@@ -264,9 +265,27 @@ int main(int argc, char *argv[])
 	app.add_option("--data-dir", dataDir, "Directory for settings, sessions and uploads");
 	app.add_option("--web-root", webRoot, "Serve the web UI from this directory instead of the built-in copy");
 	app.add_flag("--no-browser", noBrowser, "Do not open a browser");
+	app.add_flag("--app", appMode, "Desktop launcher mode: open the browser and quit when no browser has been "
+		"connected for a minute and nothing is being measured");
 	CLI11_PARSE(app, argc, argv);
 
 	Logger::getInstance().setLogLevel(LOG_INFO);
+
+	// Already running (e.g. as a service, or launched twice): just show it.
+	const std::string clientHost = host == "0.0.0.0" ? "127.0.0.1" : host;
+	const std::string url = "http://" + clientHost + ":" + std::to_string(port) + "/";
+	{
+		httplib::Client probe(clientHost, port);
+		probe.set_connection_timeout(1);
+		const auto res = probe.Get("/api/state");
+		if (res && res->status == 200 && res->body.find("\"settings\"") != std::string::npos) {
+			DBG_INFO("Sync analyzer is already running at " << url);
+			if (!noBrowser && haveDisplay()) {
+				openBrowser(url);
+			}
+			return 0;
+		}
+	}
 
 	AnalyzerService service(dataDir);
 	const std::string tempDir = (fs::path(dataDir) / "tmp").string();
@@ -461,7 +480,11 @@ int main(int argc, char *argv[])
 		res.set_content(std::move(wav), "audio/wav");
 	});
 
+	// Connected browsers (open event streams), for --app.
+	std::atomic<int> clients { 0 };
+
 	server.Get("/api/events", [&](const httplib::Request &req, httplib::Response &res) {
+		clients++;
 		auto cursor = std::make_shared<AnalyzerService::Cursor>();
 		// Resume after a reconnect: Last-Event-ID is "session:row".
 		const std::string lastId = req.get_header_value("Last-Event-ID");
@@ -488,7 +511,7 @@ int main(int argc, char *argv[])
 				events = ": keepalive\n\n";
 			}
 			return sink.write(events.data(), events.size());
-		});
+		}, [&clients](bool) { clients--; });
 	});
 
 	// Web UI: embedded files, or files from --web-root for development.
@@ -519,7 +542,6 @@ int main(int argc, char *argv[])
 		return 1;
 	}
 
-	const std::string url = "http://" + std::string(host == "0.0.0.0" ? "127.0.0.1" : host) + ":" + std::to_string(port) + "/";
 	DBG_INFO("Sync analyzer running at " << url << " (data in " << dataDir << "), press Ctrl+C to quit");
 	if (host == "127.0.0.1" || host == "localhost") {
 		DBG_INFO("Only reachable from this machine; use --host 0.0.0.0 to allow access from the network");
@@ -529,9 +551,21 @@ int main(int argc, char *argv[])
 	}
 
 	// Stop the service first so that open event streams return, then the server.
+	// With --app, quit a minute after the last browser went away (and nothing is measured).
 	std::thread quitWatcher([&] {
+		auto lastActive = std::chrono::steady_clock::now();
 		while (!g_quit) {
 			std::this_thread::sleep_for(std::chrono::milliseconds(100));
+			if (!appMode) {
+				continue;
+			}
+			const auto now = std::chrono::steady_clock::now();
+			if (clients > 0 || service.state().value("running", false)) {
+				lastActive = now;
+			} else if (now - lastActive > std::chrono::seconds(60)) {
+				DBG_INFO("No browser connected for a minute, quitting");
+				g_quit = true;
+			}
 		}
 		service.shutdown();
 		server.stop();

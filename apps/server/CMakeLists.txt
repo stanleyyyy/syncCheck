@@ -33,6 +33,15 @@ if(WIN32)
 endif()
 
 install(TARGETS sync_analyzer_server DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT applications)
+if(UNIX AND NOT APPLE)
+	# Menu entry (launcher mode), icon and the optional systemd user service.
+	install(FILES ${PROJECT_SOURCE_DIR}/packaging/linux/sync-analyzer.desktop
+		DESTINATION ${CMAKE_INSTALL_DATADIR}/applications COMPONENT applications)
+	install(FILES ${PROJECT_SOURCE_DIR}/packaging/linux/sync-analyzer.svg
+		DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps COMPONENT applications)
+	install(FILES ${PROJECT_SOURCE_DIR}/packaging/linux/sync-analyzer.service
+		DESTINATION lib/systemd/user COMPONENT applications)
+endif()
 install(FILES ${PROJECT_SOURCE_DIR}/third_party/httplib/LICENSE DESTINATION ${CMAKE_INSTALL_DOCDIR}/licenses RENAME cpp-httplib.txt COMPONENT applications)
 install(FILES ${PROJECT_SOURCE_DIR}/third_party/json/LICENSE DESTINATION ${CMAKE_INSTALL_DOCDIR}/licenses RENAME nlohmann-json.txt COMPONENT applications)
 install(FILES ${WEB_ROOT}/vendor/uPlot.LICENSE DESTINATION ${CMAKE_INSTALL_DOCDIR}/licenses RENAME uPlot.txt COMPONENT applications)

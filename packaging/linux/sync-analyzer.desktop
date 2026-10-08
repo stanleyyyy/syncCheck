@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Sync Analyzer
+Comment=Measure audio synchronization between channels
+Exec=sync_analyzer_server --app
+Icon=sync-analyzer
+Terminal=false
+Categories=AudioVideo;Audio;

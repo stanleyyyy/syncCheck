@@ -1,0 +1,14 @@
+# Runs the Sync Analyzer server in the user session (with access to the user's audio devices),
+# reachable from the network on port 8090.
+#   Enable:                systemctl --user enable --now sync-analyzer
+#   Also without login:    sudo loginctl enable-linger $USER
+[Unit]
+Description=Sync Analyzer (web UI on port 8090)
+After=network-online.target pipewire.service pulseaudio.service
+
+[Service]
+ExecStart=sync_analyzer_server --host 0.0.0.0 --no-browser
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
