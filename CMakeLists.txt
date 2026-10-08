@@ -75,11 +75,11 @@ set_target_properties(synccheck PROPERTIES
 	SOVERSION ${PROJECT_VERSION_MAJOR}
 )
 target_include_directories(synccheck PUBLIC
-	${CMAKE_CURRENT_SOURCE_DIR}
-	${CMAKE_CURRENT_SOURCE_DIR}/dsp
-	${CMAKE_CURRENT_SOURCE_DIR}/utils
-	${CMAKE_CURRENT_SOURCE_DIR}/kissfft
-	${CMAKE_CURRENT_SOURCE_DIR}/analyzer
+	$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/dsp>
+	$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/utils>
+	$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/kissfft>
+	$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/analyzer>
+	$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/synccheck>
 )
 target_include_directories(synccheck PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/miniaudio)
 find_package(Threads REQUIRED)
@@ -94,11 +94,23 @@ if(NOT MSVC)
 	target_compile_options(synccheck PRIVATE -O3 -ftree-vectorize)
 endif()
 
-install(TARGETS synccheck
-	RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-	LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-	ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+# Applications go into the installers, the library and headers into the "development" component.
+install(TARGETS synccheck EXPORT synccheckTargets
+	RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT applications
+	LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT applications NAMELINK_COMPONENT development
+	ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT development
 )
+foreach(dir dsp utils kissfft analyzer)
+	install(DIRECTORY ${dir}/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/synccheck COMPONENT development
+		FILES_MATCHING PATTERN "*.h" PATTERN "AudioDeviceImpl.h" EXCLUDE)
+endforeach()
+install(EXPORT synccheckTargets NAMESPACE synccheck:: DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/synccheck COMPONENT development)
+include(CMakePackageConfigHelpers)
+configure_package_config_file(cmake/synccheckConfig.cmake.in ${CMAKE_CURRENT_BINARY_DIR}/synccheckConfig.cmake
+	INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/synccheck)
+write_basic_package_version_file(${CMAKE_CURRENT_BINARY_DIR}/synccheckConfigVersion.cmake COMPATIBILITY SameMajorVersion)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/synccheckConfig.cmake ${CMAKE_CURRENT_BINARY_DIR}/synccheckConfigVersion.cmake
+	DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/synccheck COMPONENT development)
 
 if(SYNCCHECK_BUILD_TOOLS)
 	add_executable(sync_analyzer apps/cli/syncAnalyzer.cpp)
@@ -109,7 +121,7 @@ if(SYNCCHECK_BUILD_TOOLS)
 	target_link_libraries(sync_generator PRIVATE synccheck)
 	target_include_directories(sync_generator PRIVATE third_party/CLI11)
 
-	install(TARGETS sync_analyzer sync_generator DESTINATION ${CMAKE_INSTALL_BINDIR})
+	install(TARGETS sync_analyzer sync_generator DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT applications)
 endif()
 
 if(SYNCCHECK_BUILD_TESTS)
@@ -142,5 +154,7 @@ if(SYNCCHECK_BUILD_ALSA_PLUGIN)
 	target_compile_definitions(asound_module_pcm_bandmover PRIVATE PIC)
 	target_link_libraries(asound_module_pcm_bandmover PRIVATE synccheck PkgConfig::ALSA ${CMAKE_DL_LIBS})
 	set_target_properties(asound_module_pcm_bandmover PROPERTIES PREFIX "lib")
-	install(TARGETS asound_module_pcm_bandmover DESTINATION ${CMAKE_INSTALL_LIBDIR}/alsa-lib)
+	install(TARGETS asound_module_pcm_bandmover DESTINATION ${CMAKE_INSTALL_LIBDIR}/alsa-lib COMPONENT applications)
 endif()
+
+include(cmake/Packaging.cmake)
