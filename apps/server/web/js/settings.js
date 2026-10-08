@@ -188,8 +188,18 @@ export class SettingsDrawer {
 		input.append(field('Monitor', el('label', { class: 'toggle' },
 			el('input', { type: 'checkbox', checked: s.monitor, onchange: (e) => { s.monitor = e.target.checked; rerender(); } }), 'Play the input on an output device')));
 		if (s.monitor) {
-			input.append(field('Output', select([['default', 'System default'], ...this.devices.playback.map((d) => [d.name, d.name])], s.monitorDevice)));
-			input.lastChild.querySelector('select').onchange = set('monitorDevice');
+			const knownOutput = this.devices.playback.some((d) => d.name === s.monitorDevice) || s.monitorDevice === 'default';
+			const outputSelect = select([['default', 'System default'], ...this.devices.playback.map((d) => [d.name, d.name]), ['__custom', 'Other…']],
+				knownOutput ? s.monitorDevice : '__custom');
+			outputSelect.addEventListener('change', (e) => {
+				s.monitorDevice = e.target.value === '__custom' ? '' : e.target.value;
+				rerender();
+			});
+			input.append(field('Output', outputSelect));
+			if (!knownOutput || outputSelect.value === '__custom') {
+				input.append(field('Output name', el('input', { type: 'text', value: s.monitorDevice, placeholder: 'e.g. alsa:hw:0,0', oninput: set('monitorDevice') }),
+					'Device name or part of it, BACKEND:NAME, or alsa:PCM for raw ALSA devices'));
+			}
 		}
 		children.push(input);
 
