@@ -11,6 +11,14 @@ export function formatTime(seconds, withMs = false) {
 	return sign + (h ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`);
 }
 
+export function formatBytes(bytes) {
+	if (!Number.isFinite(bytes)) return '–';
+	const units = ['B', 'kB', 'MB', 'GB', 'TB'];
+	let i = 0;
+	while (bytes >= 1000 && i < units.length - 1) { bytes /= 1000; i++; }
+	return `${bytes.toFixed(bytes < 10 && i ? 1 : 0)} ${units[i]}`;
+}
+
 export function formatMs(value, digits = 3) {
 	if (!Number.isFinite(value)) return '–';
 	return (value > 0 ? '+' : value < 0 ? '−' : '') + Math.abs(value).toFixed(digits);

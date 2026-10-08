@@ -5,10 +5,15 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <filesystem>
+#include <fstream>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
+
+using fs_path = std::filesystem::path;
 
 /**
  * @brief Settings edited in the web UI: analyzer settings plus the input selection.
@@ -94,11 +99,6 @@ public:
 	nlohmann::json measurements(std::size_t from) const;
 
 	/**
-	 * @brief Measurements of the current session as CSV.
-	 */
-	std::string measurementsCsv() const;
-
-	/**
 	 * @brief Correlation and waveforms at a moment of the session.
 	 *
 	 * @param time Session time in seconds; ignored when live is set.
@@ -106,14 +106,47 @@ public:
 	 * @param windowMs Waveform window in ms.
 	 * @param offsetMs Center of the waveform window relative to the moment in ms.
 	 * @param live Use the latest measurement instead of re-analyzing the audio.
+	 * @param align Shift each compared channel's waveform by its measured delay.
 	 */
-	bool inspect(double time, double rangeMs, double windowMs, double offsetMs, bool live, nlohmann::json &result,
+	bool inspect(double time, double rangeMs, double windowMs, double offsetMs, bool live, bool align, nlohmann::json &result,
 		std::string &error) const;
 
 	/**
 	 * @brief Audio of the current session (recording or input file), empty if there is none.
 	 */
 	std::string sessionAudio() const;
+
+	/**
+	 * @brief All sessions in the data directory, newest first.
+	 */
+	nlohmann::json listSessions() const;
+
+	/**
+	 * @brief Make a stored session the current one (for viewing, inspecting and playback).
+	 */
+	bool openSession(const std::string &key, std::string &error);
+
+	bool renameSession(const std::string &key, const std::string &name, std::string &error);
+
+	/**
+	 * @brief Delete a session directory. The input file of a file session is kept.
+	 */
+	bool deleteSession(const std::string &key, std::string &error);
+
+	/**
+	 * @brief Measurements CSV of a session (empty key: the current session) and its download name.
+	 */
+	bool sessionCsv(const std::string &key, std::string &csv, std::string &filename, std::string &error) const;
+
+	/**
+	 * @brief Audio file of a session (empty key: the current session) and its download name.
+	 */
+	bool sessionAudioFile(const std::string &key, std::string &path, std::string &filename, std::string &error) const;
+
+	/**
+	 * @brief Disk usage: free space of the data directory and, while recording, size and write rate.
+	 */
+	nlohmann::json disk() const;
 
 	/**
 	 * @brief Position of an event stream client.
@@ -124,6 +157,7 @@ public:
 		int m_session = -1;
 		uint64_t m_stateVersion = 0;
 		std::size_t m_row = 0;
+		std::chrono::steady_clock::time_point m_lastDisk;
 	};
 
 	/**
@@ -152,6 +186,12 @@ private:
 	struct Session
 	{
 		int m_id = 0;
+		std::string m_key;		///< Directory name, also the identifier in exported file names.
+		std::string m_name;
+		std::string m_source;	///< "device" or "file"
+		bool m_recorded = false;	///< m_audio is a recording made by this session
+		std::chrono::steady_clock::time_point m_startedAt;
+		std::unique_ptr<std::ofstream> m_csv;
 		std::string m_dir;
 		std::string m_audio;
 		std::string m_started;
@@ -174,6 +214,11 @@ private:
 	nlohmann::json measurementsLocked(std::size_t from) const;
 	nlohmann::json pairsLocked() const;
 	std::string measurementsCsvLocked() const;
+	void writeSessionInfoLocked() const;
+	void appendCsvLocked();
+	nlohmann::json diskLocked() const;
+	bool sessionDir(const std::string &key, fs_path &dir, std::string &error) const;
+	static std::string exportName(const std::string &key, const std::string &name, const std::string &suffix);
 
 	const std::string m_dataDir;
 

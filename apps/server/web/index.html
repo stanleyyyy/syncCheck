@@ -15,6 +15,7 @@
 		<div class="spacer"></div>
 		<span class="status" id="status" data-state="idle"><span class="dot"></span><span id="statusText">Idle</span></span>
 		<span class="num muted" id="elapsed"></span>
+		<span class="disk hidden" id="disk" title="Recording: file size, average write speed, free space of the data directory"></span>
 		<div class="actions">
 			<button class="btn primary" id="startStop">Start</button>
 			<button class="btn ghost" id="openSignal" title="Create a test signal">Test signal</button>
@@ -25,6 +26,7 @@
 					<a href="api/recording.wav" id="exportAudio">Session audio (WAV)</a>
 				</div>
 			</div>
+			<button class="btn ghost" id="openSessions">Sessions</button>
 			<button class="btn ghost" id="openSettings">Settings</button>
 			<button class="btn ghost" id="themeToggle" title="Toggle light/dark theme" aria-label="Toggle theme">◐</button>
 		</div>
@@ -114,6 +116,12 @@
 			<button class="btn" id="cancelSettings">Cancel</button>
 			<button class="btn primary" id="saveSettings">Save</button>
 		</footer>
+	</aside>
+
+	<aside class="drawer wide hidden" id="sessionsDrawer" aria-label="Sessions">
+		<header><h2>Sessions</h2><div class="spacer"></div><button class="btn ghost" id="closeSessions" aria-label="Close">✕</button></header>
+		<div class="body" id="sessionsBody"></div>
+		<footer><span class="muted num" id="sessionsDisk"></span></footer>
 	</aside>
 
 	<dialog id="signalDialog">

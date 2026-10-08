@@ -85,12 +85,14 @@ export class Inspector {
 	params() {
 		const range = Math.max(Math.abs(this.corrView.min), Math.abs(this.corrView.max));
 		const w = this.waveView;
-		return { range: Math.min(range, this.maxLag).toFixed(3), window: (w.max - w.min).toFixed(3), offset: ((w.min + w.max) / 2).toFixed(3) };
+		return { range: Math.min(range, this.maxLag).toFixed(3), window: (w.max - w.min).toFixed(3), offset: ((w.min + w.max) / 2).toFixed(3),
+			align: this.align ? 1 : 0 };
 	}
 
+	// Aligned waveforms are read shifted by the server.
 	setAlign(align) {
 		this.align = align;
-		if (this.result) this.renderWaveform(this.result, true);
+		this.onViewChange();
 	}
 
 	clear() {
@@ -256,29 +258,25 @@ export class Inspector {
 	}
 
 	// uPlot data/series/bands for an envelope: a line per channel, or min/max bands when decimated.
-	traces(wave, shown, sampleRate, align) {
+	traces(wave, shown, sampleRate) {
 		const n = wave.channels[0] ? wave.channels[0].min.length : 0;
 		const xs = Array.from({ length: n }, (_, i) => wave.startMs + i * wave.stepMs);
 		const data = [xs];
 		const series = [{}];
 		const bands = [];
 		const decimated = wave.stepMs * sampleRate / 1000 > 1.5;
-		for (const s of shown) {
+		// The reference is drawn wide and light underneath, so channels that line up stay visible.
+		for (const [index, s] of shown.entries()) {
 			const trace = wave.channels.find((c) => c.channel === s.channel);
 			if (!trace) continue;
-			// Align: move a delayed channel back by its measured delay.
-			const offset = align ? Math.round(s.delay / wave.stepMs) : 0;
-			const shift = (values) => values.map((_, i) => {
-				const k = i + offset;
-				return k >= 0 && k < values.length ? values[k] : null;
-			});
+			const reference = index === 0 && shown.length > 1;
 			if (decimated) {
-				data.push(shift(trace.max), shift(trace.min));
+				data.push(trace.max, trace.min);
 				series.push({ stroke: s.color, width: 1, points: { show: false } }, { stroke: s.color, width: 1, points: { show: false } });
 				bands.push({ series: [series.length - 2, series.length - 1], fill: s.color + '40' });
 			} else {
-				data.push(shift(trace.max));
-				series.push({ stroke: s.color, width: 1.5, points: { show: false } });
+				data.push(trace.max);
+				series.push({ stroke: reference ? s.color + '80' : s.color, width: reference ? 4 : 1.25, points: { show: false } });
 			}
 		}
 		return { data, series, bands, key: `${shown.map((s) => s.channel + s.color).join()}:${decimated}` };
@@ -304,7 +302,7 @@ export class Inspector {
 
 		const colors = chartColors();
 		const shown = this.shownChannels(result);
-		const { data, series, bands, key } = this.traces(wave, shown, result.sampleRate, this.align);
+		const { data, series, bands, key } = this.traces(wave, shown, result.sampleRate);
 
 		if (this.wave && this.waveKey === key && !force) {
 			this.wave.setData(data, true);
@@ -339,7 +337,7 @@ export class Inspector {
 			this.overview = null;
 			return;
 		}
-		const { data, series, bands, key } = this.traces(result.overview, shown, result.sampleRate, false);
+		const { data, series, bands, key } = this.traces(result.overview, shown, result.sampleRate);
 		if (this.overview && this.overviewKey === key) {
 			this.overview.setData(data, true);
 			return;

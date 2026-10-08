@@ -343,32 +343,82 @@ int main(int argc, char *argv[])
 		sendJson(res, service.measurements(static_cast<std::size_t>(queryNumber(req, "from", 0))));
 	});
 
-	server.Get("/api/measurements.csv", [&](const httplib::Request &, httplib::Response &res) {
-		res.set_header("Content-Disposition", "attachment; filename=\"measurements.csv\"");
-		res.set_content(service.measurementsCsv(), "text/csv");
+	// Exports, of the current session or of a stored one (key); file names start with the session identifier.
+	auto sendCsv = [&](const std::string &key, httplib::Response &res) {
+		std::string csv, filename, error;
+		if (!service.sessionCsv(key, csv, filename, error)) {
+			sendError(res, error, 404);
+			return;
+		}
+		res.set_header("Content-Disposition", "attachment; filename=\"" + filename + "\"");
+		res.set_content(std::move(csv), "text/csv");
+	};
+	auto sendAudio = [&](const std::string &key, httplib::Response &res) {
+		std::string path, filename, error;
+		if (!service.sessionAudioFile(key, path, filename, error)) {
+			sendError(res, error, 404);
+			return;
+		}
+		res.set_header("Content-Disposition", "attachment; filename=\"" + filename + "\"");
+		res.set_file_content(path, "application/octet-stream");
+	};
+	server.Get("/api/measurements.csv", [&](const httplib::Request &, httplib::Response &res) { sendCsv("", res); });
+	server.Get("/api/recording.wav", [&](const httplib::Request &, httplib::Response &res) { sendAudio("", res); });
+	server.Get(R"(/api/sessions/([\w-]+)/measurements\.csv)", [&](const httplib::Request &req, httplib::Response &res) {
+		sendCsv(req.matches[1], res);
 	});
+	server.Get(R"(/api/sessions/([\w-]+)/audio)", [&](const httplib::Request &req, httplib::Response &res) {
+		sendAudio(req.matches[1], res);
+	});
+
+	// Session library
+	server.Get("/api/sessions", [&](const httplib::Request &, httplib::Response &res) {
+		sendJson(res, { { "sessions", service.listSessions() }, { "disk", service.disk() } });
+	});
+	server.Post(R"(/api/sessions/([\w-]+)/open)", [&](const httplib::Request &req, httplib::Response &res) {
+		std::string error;
+		if (!service.openSession(req.matches[1], error)) {
+			sendError(res, error);
+			return;
+		}
+		sendJson(res, service.state());
+	});
+	server.Put(R"(/api/sessions/([\w-]+))", [&](const httplib::Request &req, httplib::Response &res) {
+		std::string error;
+		try {
+			if (!service.renameSession(req.matches[1], json::parse(req.body).at("name").get<std::string>(), error)) {
+				sendError(res, error);
+				return;
+			}
+		} catch (const std::exception &e) {
+			sendError(res, e.what());
+			return;
+		}
+		sendJson(res, { { "ok", true } });
+	});
+	server.Delete(R"(/api/sessions/([\w-]+))", [&](const httplib::Request &req, httplib::Response &res) {
+		std::string error;
+		if (!service.deleteSession(req.matches[1], error)) {
+			sendError(res, error);
+			return;
+		}
+		sendJson(res, { { "ok", true } });
+	});
+	server.Get("/api/disk", [&](const httplib::Request &, httplib::Response &res) { sendJson(res, service.disk()); });
 
 	server.Get("/api/inspect", [&](const httplib::Request &req, httplib::Response &res) {
 		json result;
 		std::string error;
 		const bool live = req.has_param("live") && req.get_param_value("live") == "1";
 		if (!service.inspect(queryNumber(req, "t", 0), std::clamp(queryNumber(req, "range", 10), 0.1, 2000.0),
-				std::clamp(queryNumber(req, "window", 20), 0.5, 60000.0), queryNumber(req, "offset", 0), live, result, error)) {
+				std::clamp(queryNumber(req, "window", 20), 0.5, 60000.0), queryNumber(req, "offset", 0), live,
+				req.get_param_value("align") == "1", result, error)) {
 			sendError(res, error, 404);
 			return;
 		}
 		sendJson(res, result);
 	});
 
-	server.Get("/api/recording.wav", [&](const httplib::Request &, httplib::Response &res) {
-		const std::string audio = service.sessionAudio();
-		if (audio.empty() || !fs::exists(audio)) {
-			sendError(res, "this session has no audio", 404);
-			return;
-		}
-		res.set_header("Content-Disposition", "attachment; filename=\"" + fs::path(audio).filename().string() + "\"");
-		res.set_file_content(audio, "audio/wav");
-	});
 
 	server.Get("/api/fileinfo", [&](const httplib::Request &req, httplib::Response &res) {
 		const json info = fileInfo(req.get_param_value("path"));

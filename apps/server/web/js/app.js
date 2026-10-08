@@ -1,11 +1,12 @@
 // Sync Analyzer web UI.
 import { api, subscribe } from './api.js';
-import { formatMs, formatTime, pairLabel, quality, slope, el } from './format.js';
+import { formatBytes, formatMs, formatTime, pairLabel, quality, slope, el } from './format.js';
 import { initTheme, onThemeChange, seriesColor } from './theme.js';
 import { Timeline } from './timeline.js';
 import { Inspector } from './inspector.js';
 import { SettingsDrawer } from './settings.js';
 import { SignalDialog } from './signal.js';
+import { SessionsDrawer } from './sessions.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -33,6 +34,8 @@ const inspector = new Inspector({
 });
 const settingsDrawer = new SettingsDrawer({ drawer: $('settingsDrawer'), scrim: $('scrim'), body: $('settingsBody'),
 	onSaved: (settings) => { app.state.settings = settings; renderHeader(); } });
+const sessionsDrawer = new SessionsDrawer({ drawer: $('sessionsDrawer'), scrim: $('scrim'), body: $('sessionsBody'), footer: $('sessionsDisk'),
+	onOpened: (state) => onState(state), onError: showError });
 const signalDialog = new SignalDialog({ dialog: $('signalDialog'), body: $('signalBody'), download: $('downloadSignal') });
 
 function showError(message) {
@@ -116,6 +119,21 @@ function nearestIndex(time) {
 	return lo > 0 && Math.abs(t[lo - 1] - time) < Math.abs(t[lo] - time) ? lo - 1 : lo;
 }
 
+// Recording: file size, write speed, free space and how long it lasts.
+function onDisk(disk) {
+	const chip = $('disk');
+	const recording = app.state && app.state.running && disk.size !== undefined;
+	chip.classList.toggle('hidden', !recording);
+	if (!recording) return;
+	const parts = [`${formatBytes(disk.size)}`];
+	if (disk.rate) parts.push(`${formatBytes(disk.rate)}/s`);
+	if (disk.free !== undefined) {
+		parts.push(`${formatBytes(disk.free)} free` + (disk.remaining ? ` (~${formatTime(disk.remaining)})` : ''));
+	}
+	chip.textContent = parts.join(' · ');
+	chip.classList.toggle('low', disk.remaining !== undefined && disk.remaining < 600);
+}
+
 function updateElapsed() {
 	const t = app.store.t;
 	$('elapsed').textContent = t.length ? formatTime(t[t.length - 1]) : '';
@@ -172,6 +190,8 @@ function onState(state) {
 	}
 	renderHeader();
 	updateInspectorHeader();
+	if (!state.running) $('disk').classList.add('hidden');
+	if (sessionsDrawer.isOpen()) sessionsDrawer.refresh();
 	if (previous && previous.running && !state.running) scheduleInspect(0);
 }
 
@@ -285,7 +305,9 @@ document.addEventListener('keydown', (e) => {
 	if (e.target.closest('input, select, textarea, dialog') || !app.store.t.length) return;
 	const t = app.store.t;
 	if (e.key === 'Escape') {
-		if (!$('settingsDrawer').classList.contains('hidden')) settingsDrawer.close(); else backToLive();
+		if (!$('settingsDrawer').classList.contains('hidden')) settingsDrawer.close();
+		else if (sessionsDrawer.isOpen()) sessionsDrawer.close();
+		else backToLive();
 		return;
 	}
 	if (e.key === ' ') {
@@ -329,13 +351,15 @@ $('startStop').addEventListener('click', async () => {
 		button.disabled = false;
 	}
 });
-const openSettings = () => settingsDrawer.open(app.state.settings, app.state.running);
+const openSettings = () => { sessionsDrawer.close(); settingsDrawer.open(app.state.settings, app.state.running); };
+$('openSessions').addEventListener('click', () => { settingsDrawer.close(); sessionsDrawer.open(); });
+$('closeSessions').addEventListener('click', () => sessionsDrawer.close());
 $('openSettings').addEventListener('click', openSettings);
 $('emptySettings').addEventListener('click', openSettings);
 $('closeSettings').addEventListener('click', () => settingsDrawer.close());
 $('cancelSettings').addEventListener('click', () => settingsDrawer.close());
 $('resetSettings').addEventListener('click', () => settingsDrawer.reset());
-$('scrim').addEventListener('click', () => settingsDrawer.close());
+$('scrim').addEventListener('click', () => { settingsDrawer.close(); sessionsDrawer.close(); });
 $('saveSettings').addEventListener('click', () => settingsDrawer.save());
 $('openSignal').addEventListener('click', () => {
 	const current = session();
@@ -381,6 +405,7 @@ api.state().then((state) => {
 	subscribe({
 		onState,
 		onMeasurements,
+		onDisk,
 		onConnection: (connected) => {
 			if (!connected) showError('Connection to the analyzer lost, reconnecting…');
 			else if (app.state) renderHeader();

@@ -19,6 +19,10 @@ export const api = {
 	devices: () => request('GET', 'api/devices'),
 	saveSettings: (settings) => request('PUT', 'api/settings', settings),
 	resetSettings: () => request('POST', 'api/settings/reset'),
+	sessions: () => request('GET', 'api/sessions'),
+	openSession: (key) => request('POST', `api/sessions/${encodeURIComponent(key)}/open`),
+	renameSession: (key, name) => request('PUT', `api/sessions/${encodeURIComponent(key)}`, { name }),
+	deleteSession: (key) => request('DELETE', `api/sessions/${encodeURIComponent(key)}`),
 	start: () => request('POST', 'api/start'),
 	stop: () => request('POST', 'api/stop'),
 	fileInfo: (path) => request('GET', `api/fileinfo?path=${encodeURIComponent(path)}`),
@@ -35,8 +39,9 @@ export const api = {
 
 // Live updates: 'state' and 'measurements' events. EventSource reconnects by itself and
 // resumes from the last received measurement (Last-Event-ID).
-export function subscribe({ onState, onMeasurements, onConnection }) {
+export function subscribe({ onState, onMeasurements, onDisk, onConnection }) {
 	const source = new EventSource('api/events');
+	source.addEventListener('disk', (e) => onDisk(JSON.parse(e.data)));
 	source.addEventListener('state', (e) => onState(JSON.parse(e.data)));
 	source.addEventListener('measurements', (e) => onMeasurements(JSON.parse(e.data)));
 	source.onopen = () => onConnection(true);
