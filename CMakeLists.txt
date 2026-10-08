@@ -113,14 +113,22 @@ if(SYNCCHECK_BUILD_TOOLS)
 endif()
 
 if(SYNCCHECK_BUILD_TESTS)
+	enable_testing()
+
+	add_executable(sync_analyzer_test test/syncAnalyzerTest.cpp)
+	target_link_libraries(sync_analyzer_test PRIVATE synccheck)
+	add_test(NAME sync_analyzer_test COMMAND sync_analyzer_test)
+
 	add_executable(sync_generator_analyzer_test test/syncGeneratorAnalyzerTest.cpp)
 	target_link_libraries(sync_generator_analyzer_test PRIVATE synccheck)
 
 	add_executable(sync_generator_test test/syncGeneratorTest.cpp)
 	target_link_libraries(sync_generator_test PRIVATE synccheck)
+	add_test(NAME sync_generator_test COMMAND sync_generator_test)
 
 	add_executable(sync_generator_window_test test/syncGeneratorWindowTest.cpp)
 	target_link_libraries(sync_generator_window_test PRIVATE synccheck)
+	add_test(NAME sync_generator_window_test COMMAND sync_generator_window_test)
 
 	add_executable(hilbert_test test/hilbertTest.cpp)
 	target_link_libraries(hilbert_test PRIVATE synccheck)
