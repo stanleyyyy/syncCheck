@@ -202,14 +202,14 @@ h3 { font-size: 13px; font-weight: 600; margin: 0 0 6px; color: var(--ink-2); }
 	background: color-mix(in srgb, var(--critical) 10%, transparent);
 }
 
-/* Pair cards: one compact row per pair, they are also the legend */
-.pairs { display: flex; flex-wrap: wrap; gap: 8px; min-height: 56px; min-width: 0; }
+/* Pair cards: stacked at the top of the inspector, one row per pair; they are also the legend */
+.pairs { display: flex; flex-direction: column; gap: 6px; min-height: 52px; min-width: 0; margin-bottom: 10px; }
 .card {
 	display: flex;
 	align-items: center;
 	gap: 14px;
-	height: 56px;
-	padding: 0 14px;
+	height: 52px;
+	padding: 0 6px 0 14px;
 	background: var(--surface);
 	border: 1px solid var(--border);
 	border-radius: var(--radius);
@@ -217,9 +217,17 @@ h3 { font-size: 13px; font-weight: 600; margin: 0 0 6px; color: var(--ink-2); }
 	flex: none;
 }
 .card .label { display: flex; align-items: center; gap: 8px; color: var(--ink-2); font-size: 13px; white-space: nowrap; }
+/* The card of the pair shown in the inspector is outlined; hidden pairs are faded. */
+.card.pair { cursor: pointer; }
+.card.pair:hover { background: var(--hover); }
+.card.pair.selected { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); background: color-mix(in srgb, var(--accent) 7%, var(--surface)); }
+.card.pair.off > :not(.eye) { opacity: 0.4; }
+.card .eye { margin-left: auto; color: var(--ink-2); flex: none; }
+.card.pair.off .eye { color: var(--muted); }
 .key { width: 16px; height: 3px; border-radius: 2px; flex: none; display: inline-block; }
 .card .value { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; min-width: 6.5ch; text-align: right; }
-.card .meta { min-width: 17em; }
+.card .meta { min-width: 0; flex: 1 1 auto; overflow: hidden; }
+.card .meta div { overflow: hidden; text-overflow: ellipsis; }
 .quality { min-width: 4.5em; }
 .quality[data-q="none"] .icon { background: var(--grid); }
 .card .value small { font-size: 13px; font-weight: 400; color: var(--ink-2); margin-left: 2px; }
@@ -289,6 +297,10 @@ table.values { width: 100%; border-collapse: collapse; margin-top: 8px; font-siz
 table.values th { text-align: left; font-weight: 500; color: var(--muted); padding: 4px 8px; border-bottom: 1px solid var(--border); }
 table.values td { padding: 3px 8px; border-bottom: 1px solid var(--border); }
 table.values td.right, table.values th.right { text-align: right; }
+table.values tbody tr { cursor: pointer; }
+table.values tbody tr:hover { background: var(--hover); }
+table.values tbody tr.selected { background: color-mix(in srgb, var(--accent) 10%, transparent); font-weight: 600; }
+table.values tbody tr.selected td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 
 /* uPlot chrome: dragging moves the charts */
 .chart .u-over { cursor: grab; }
@@ -406,11 +418,9 @@ main { container-type: inline-size; min-width: 0; width: 100%; box-sizing: borde
 	main { padding: 8px; gap: 8px; }
 	.panel { padding: 10px; }
 	.pairs { min-height: 0; }
-	.card { width: 100%; flex: 1 1 100%; min-width: 0; gap: 10px; padding: 0 10px; }
-	.card .meta { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; }
-	.card .meta div { overflow: hidden; text-overflow: ellipsis; }
-	.card .value { font-size: 20px; min-width: 0; }
-	.card .meta div:last-child { display: none; }
+	.card { min-width: 0; gap: 10px; padding: 0 4px 0 10px; }
+	.card .value { font-size: 20px; }
+	.card .meta { display: none; }
 	.panel-head, .metric-head, .subhead { flex-wrap: wrap; }
 	#timelinePanel .hint { display: none; }
 	.drawer { width: 100vw; }

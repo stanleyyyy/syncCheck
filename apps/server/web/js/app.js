@@ -17,6 +17,8 @@ const app = {
 	store: { t: [], pairs: [] },
 	labels: [],
 	selection: null,	// selected session time, null = live / latest
+	pair: 0,			// pair shown in the inspector
+	hidden: new Set(),	// pairs hidden in the charts
 	inspectTimer: null,
 	inspectSeq: 0,
 	renderedSeq: 0,
@@ -29,12 +31,13 @@ const timeline = new Timeline({
 	onFollowChange: (follow) => { $('follow').checked = follow; updateRangeButtons(); updateCards(); },
 });
 const inspector = new Inspector({
-	corrEl: $('corrChart'), waveEl: $('waveChart'), overviewEl: $('waveOverview'), keysEl: $('waveKeys'), tableEl: $('inspectTable'), noAudioEl: $('noAudio'),
+	corrEl: $('corrChart'), waveEl: $('waveChart'), pairsEl: $('pairs'), overviewEl: $('waveOverview'), keysEl: $('waveKeys'), tableEl: $('inspectTable'), noAudioEl: $('noAudio'),
 	corrReadout: $('corrReadout'), waveReadout: $('waveReadout'), waveScaleEl: $('waveScale'),
 	// immediate: while dragging (already throttled by the inspector)
 	onViewChange: (immediate) => (immediate ? inspect() : scheduleInspect(150, true)),
 	// A click on the waveform inspects that moment.
 	onSelect: (time) => { revealInTimeline(time); select(time); },
+	onPair: (index) => selectPair(index),
 	levels: () => app.store,
 });
 const settingsDrawer = new SettingsDrawer({ drawer: $('settingsDrawer'), scrim: $('scrim'), body: $('settingsBody'),
@@ -115,6 +118,7 @@ function renderHeader() {
 }
 
 // Pair cards: values of the selected moment (or the latest), quality and drift over the visible range.
+// A click on a card inspects that pair, its eye button shows or hides it in the charts.
 function updateCards() {
 	const container = $('pairs');
 	const store = app.store;
@@ -134,15 +138,27 @@ function updateCards() {
 		const pslr = has ? pair.pslr[index] : 0;
 		const q = quality(pslr, confidence);
 		const drift = pair ? slope(store.t, pair.delay, from, to) * 60 : NaN;
-		return el('div', { class: 'card' },
+		const shown = !app.hidden.has(i);
+		return el('div', { class: `card pair${i === app.pair ? ' selected' : ''}${shown ? '' : ' off'}`, 'data-pair': i,
+			title: i === app.pair ? 'Shown in the inspector' : 'Click to show this pair in the inspector' },
 			el('div', { class: 'label' }, el('span', { class: 'key', style: `background:${seriesColor(i)}` }), label),
 			el('div', { class: 'value' }, has ? formatMs(delay) : '–', el('small', { text: 'ms' })),
 			// Same lines before and after the first values, so the card keeps its size.
 			el('div', { class: 'meta' },
 				el('div', { text: has ? `${(confidence * 100).toFixed(0)} % · PSLR ${pslr.toFixed(1)} dB` : '– % · PSLR – dB' }),
-				el('div', { text: `drift ${Number.isFinite(drift) ? formatMs(drift, 3) : '–'} ms/min in view` })),
-			el('span', { class: 'quality', 'data-q': has ? q.key : 'none' }, el('span', { class: 'icon' }), has ? q.label : '–'));
+				el('div', { text: `drift ${Number.isFinite(drift) ? formatMs(drift, 3) : '–'} ms/min`, title: 'Drift over the visible part of the delay chart' })),
+			el('span', { class: 'quality', 'data-q': has ? q.key : 'none' }, el('span', { class: 'icon' }), has ? q.label : '–'),
+			eyeButton(i, shown));
 	}));
+}
+
+// Show/hide button of a card: an eye, crossed out while the pair is hidden.
+function eyeButton(index, shown) {
+	const button = el('button', { class: 'btn ghost icon eye', 'data-show': index, 'aria-pressed': String(!shown),
+		title: shown ? 'Hide this pair in the charts' : 'Show this pair in the charts', 'aria-label': shown ? 'Hide pair' : 'Show pair' });
+	button.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true">
+		<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>${shown ? '' : '<path d="M4 4l16 16"/>'}</svg>`;
+	return button;
 }
 
 function nearestIndex(time) {
@@ -200,6 +216,29 @@ function updateListenOptions(current) {
 	$('listen').replaceChildren(...options);
 }
 
+// Pair shown in the inspector; playback follows it.
+function selectPair(index) {
+	app.pair = index;
+	const p = app.pairs[index];
+	const option = p ? `${p.ref},${p.sig}` : '';
+	if (p && [...$('listen').options].some((o) => o.value === option)) $('listen').value = option;
+	inspector.setPair(index, app.hidden);
+	updateCards();
+	updateInspectorHeader();
+}
+
+// Show or hide a pair in the charts; the inspector moves to another pair when its own is hidden.
+function showPair(index, show) {
+	if (show) app.hidden.delete(index); else app.hidden.add(index);
+	timeline.setHidden(app.hidden);
+	if (!show && index === app.pair) {
+		const next = app.labels.findIndex((label, i) => !app.hidden.has(i));
+		if (next >= 0) { selectPair(next); return; }
+	}
+	inspector.setPair(app.pair, app.hidden);
+	updateCards();
+}
+
 // A new session: reset the data and rebuild the charts.
 function startSession(current) {
 	stopPlayback();
@@ -207,11 +246,14 @@ function startSession(current) {
 	app.pairs = current ? current.pairs : [];
 	app.labels = app.pairs.map((p) => pairLabel(p, current.mode));
 	app.selection = null;
+	app.pair = 0;
+	app.hidden = new Set();
 	app.store = { t: [], pairs: app.labels.map(() => ({ delay: [], confidence: [], pslr: [], refRms: [], sigRms: [] })) };
 	updateVisibility();
 	timeline.setPairs(app.labels);
 	timeline.setData(app.store);
 	inspector.setPairs(app.labels, current && current.sampleRate ? current.blockSize / 2 / current.sampleRate * 1000 : 0);
+	inspector.setPair(app.pair, app.hidden);
 	updateListenOptions(current);
 	updateCards();
 	updateInspectorHeader();
@@ -263,6 +305,7 @@ function onMeasurements(batch) {
 function updateInspectorHeader() {
 	const live = app.selection === null;
 	const running = app.state && app.state.running;
+	$('inspectPair').textContent = app.labels.length > 1 ? `· ${app.labels[app.pair]}` : '';
 	$('inspectTime').textContent = live ? (running ? '' : '· last measurement') : `· ${formatTime(app.selection, true)}`;
 	$('liveBadge').classList.toggle('hidden', !(live && running));
 	$('backToLive').classList.toggle('hidden', live);
@@ -473,6 +516,19 @@ $('alignWaves').addEventListener('change', (e) => inspector.setAlign(e.target.ch
 $('corrReset').addEventListener('click', () => inspector.resetCorrelation());
 $('waveReset').addEventListener('click', () => inspector.resetWaveform());
 $('playButton').addEventListener('click', () => (app.audio ? stopPlayback() : startPlayback()));
+$('pairs').addEventListener('click', (e) => {
+	const eye = e.target.closest('[data-show]');
+	if (eye) {
+		const index = Number(eye.dataset.show);
+		showPair(index, app.hidden.has(index));
+		return;
+	}
+	const card = e.target.closest('[data-pair]');
+	if (!card) return;
+	const index = Number(card.dataset.pair);
+	if (app.hidden.has(index)) showPair(index, true);
+	selectPair(index);
+});
 
 initTheme($('themeToggle'));
 onThemeChange(() => {

@@ -89,6 +89,7 @@ export class Timeline {
 		this.onSelect = onSelect;
 		this.onFollowChange = onFollowChange;
 		this.labels = [];
+		this.hidden = new Set();	// pairs not drawn
 		this.store = null;
 		this.metric = 'confidence';
 		this.rangeSeconds = 600;
@@ -115,6 +116,7 @@ export class Timeline {
 
 	setPairs(labels) {
 		this.labels = labels;
+		this.hidden = new Set();
 		this.selection = null;
 		this.playhead = null;
 		this.xRange = null;
@@ -135,7 +137,7 @@ export class Timeline {
 
 		this.delay = new uPlot({
 			width, height: HEIGHT.delay, legend: { show: false },
-			series: [{ label: 'Time' }, ...this.labels.map((label, i) => ({ label, stroke: seriesColor(i), width: 2, points: { show: false } }))],
+			series: [{ label: 'Time' }, ...this.labels.map((label, i) => ({ label, stroke: seriesColor(i), width: 2, points: { show: false }, show: !this.hidden.has(i) }))],
 			// At least 0.1 ms tall, so a steady delay is a flat line instead of magnified noise.
 			scales: { x: { time: false }, y: { range: (u, min, max) => this.delayRange(u, min, max) } },
 			axes: axes(colors, 'Delay (ms)', (v, decimals) => formatMs(v, decimals)),
@@ -158,7 +160,7 @@ export class Timeline {
 		const [overviewX, overviewY] = axes(colors, '', () => '');
 		this.overview = new uPlot({
 			width, height: HEIGHT.overview, legend: { show: false },
-			series: [{}, ...this.labels.map((label, i) => ({ stroke: seriesColor(i), width: 1, points: { show: false } }))],
+			series: [{}, ...this.labels.map((label, i) => ({ stroke: seriesColor(i), width: 1, points: { show: false }, show: !this.hidden.has(i) }))],
 			// Without data uPlot has no x range; fall back to an empty 10 s axis.
 			scales: { x: { time: false, range: (u, min, max) => (min === null || max === null || min === max ? [0, 10] : [min, max]) } },
 			// The hidden y axis keeps the plot area aligned with the charts above.
@@ -201,7 +203,7 @@ export class Timeline {
 	metricSeries() {
 		const series = [{ label: 'Time' }, ...this.labels.map((label, i) => ({
 			label: this.metric === 'level' ? label.replace(/ vs .*/, '') : label,
-			stroke: seriesColor(i), width: 2, points: { show: false },
+			stroke: seriesColor(i), width: 2, points: { show: false }, show: !this.hidden.has(i),
 		}))];
 		if (this.metric === 'level') {
 			const ref = this.labels.length ? this.labels[0].replace(/.* vs /, '') : 'Reference';
@@ -226,6 +228,17 @@ export class Timeline {
 		this.metricChart.setData(this.chartData(this.metric), false);
 		this.overview.setData(this.chartData('delay'), true);
 		this.applyRange();
+	}
+
+	// Hidden pairs are left out of the charts and their vertical scales.
+	setHidden(hidden) {
+		this.hidden = new Set(hidden);
+		this.build();
+	}
+
+	// Pairs drawn, in order.
+	shownPairs() {
+		return this.labels.map((label, i) => i).filter((i) => !this.hidden.has(i));
 	}
 
 	setMetric(metric) {
@@ -427,8 +440,8 @@ export class Timeline {
 	wholeDelayRange(u) {
 		if (!this.store) return null;
 		let min = Infinity, max = -Infinity;
-		for (const pair of this.store.pairs) {
-			for (const v of pair.delay) {
+		for (const i of this.shownPairs()) {
+			for (const v of this.store.pairs[i].delay) {
 				if (!Number.isFinite(v)) continue;
 				if (v < min) min = v;
 				if (v > max) max = v;
@@ -452,7 +465,7 @@ export class Timeline {
 	}
 
 	withQualityRoom(u, range) {
-		const strips = this.labels.length * (QUALITY_ROW + QUALITY_GAP) + QUALITY_GAP;
+		const strips = this.shownPairs().length * (QUALITY_ROW + QUALITY_GAP) + QUALITY_GAP;
 		const plot = Math.max(u.bbox.height / devicePixelRatio || HEIGHT.delay - 60, strips * 3);
 		return [range[0], range[1] + (range[1] - range[0]) * strips / (plot - strips)];
 	}
@@ -469,8 +482,8 @@ export class Timeline {
 		const [from, to] = this.visibleIndexRange();
 		const first = Math.max(0, from - 1), last = Math.min(t.length - 1, to + 1);
 		ctx.save();
-		this.labels.forEach((label, pair) => {
-			const top = u.bbox.top + (QUALITY_GAP + pair * (QUALITY_ROW + QUALITY_GAP)) * devicePixelRatio;
+		this.shownPairs().forEach((pair, row) => {
+			const top = u.bbox.top + (QUALITY_GAP + row * (QUALITY_ROW + QUALITY_GAP)) * devicePixelRatio;
 			let runStart = null, runKey = null;
 			const flush = (end) => {
 				if (runKey === null) return;

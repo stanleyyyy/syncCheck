@@ -1,4 +1,4 @@
-// Inspector: correlation at one moment of the session (the cursor) and the waveforms of the whole recording.
+// Inspector: correlation of one pair at one moment of the session (the cursor) and the waveforms of the whole recording.
 // Charts zoom with Ctrl+wheel and move by dragging; data for the new view is fetched while doing so.
 // The waveform view moves freely through the recording; clicking it puts the cursor (the inspected moment) there.
 import { api } from './api.js';
@@ -17,9 +17,9 @@ const DEFAULT_WAVE_WIDTH = 0.005;
 const MIN_WAVE_WIDTH = 0.0002;
 const MAX_WAVE_WIDTH = 30;
 
-// Both charts share the height the window has left.
-function fitHeight() {
-	HEIGHT.value = Math.max(150, Math.min(340, (viewportHeight() - 460) / 2));
+// Both charts share the height the window has left besides the pair cards (extra, px).
+function fitHeight(extra) {
+	HEIGHT.value = Math.max(150, Math.min(340, (viewportHeight() - 460 - extra) / 2));
 }
 
 // Tick labels with as many decimals as the tick spacing needs.
@@ -49,9 +49,10 @@ function verticalLine(u, x, color, dash) {
 }
 
 export class Inspector {
-	constructor({ corrEl, waveEl, overviewEl, keysEl, tableEl, noAudioEl, corrReadout, waveReadout, waveScaleEl, onViewChange, onSelect, levels }) {
+	constructor({ corrEl, waveEl, pairsEl, overviewEl, keysEl, tableEl, noAudioEl, corrReadout, waveReadout, waveScaleEl, onViewChange, onSelect, onPair, levels }) {
 		this.corrEl = corrEl;
 		this.waveEl = waveEl;
+		this.pairsEl = pairsEl;
 		this.overviewEl = overviewEl;
 		this.keysEl = keysEl;
 		this.tableEl = tableEl;
@@ -60,9 +61,12 @@ export class Inspector {
 		this.waveReadout = waveReadout;
 		this.onViewChange = onViewChange;
 		this.onSelect = onSelect;
+		this.onPair = onPair;
 		this.levels = levels;
 		this.result = null;
 		this.labels = [];
+		this.pair = 0;			// the pair shown
+		this.hidden = new Set();	// pairs left out of the table
 		this.align = false;
 		this.maxLag = 340;
 		this.corrView = { ...DEFAULT_CORR };
@@ -75,7 +79,10 @@ export class Inspector {
 		this.corr = this.wave = this.overview = null;
 		this.dragTimer = null;
 		this.reserveHeights();
-		new ResizeObserver(() => this.resize()).observe(corrEl);
+		const observer = new ResizeObserver(() => this.resize());
+		observer.observe(corrEl);
+		// The pair cards take height from the charts.
+		observer.observe(pairsEl);
 		window.addEventListener('resize', () => this.resize());
 		this.updateReadouts();
 	}
@@ -101,9 +108,13 @@ export class Inspector {
 		this.renderTable({ pairs: labels.map(() => ({ delay: NaN, pslr: NaN })) });
 	}
 
+	fitHeight() {
+		fitHeight(this.pairsEl.offsetHeight);
+	}
+
 	// Keep the chart areas their size before data arrives, so the page does not jump.
 	reserveHeights() {
-		fitHeight();
+		this.fitHeight();
 		this.corrEl.style.minHeight = `${HEIGHT.value}px`;
 		this.waveEl.style.minHeight = `${HEIGHT.value}px`;
 		this.overviewEl.style.minHeight = `${OVERVIEW_HEIGHT + 5}px`;
@@ -114,6 +125,27 @@ export class Inspector {
 		const c = this.corrView;
 		const range = Math.max(Math.abs(c.min), Math.abs(c.max)) + (c.max - c.min);
 		return { range: Math.min(range, this.maxLag).toFixed(3), window: 0.5 };
+	}
+
+	// Show another pair; the table lists the pairs that are not hidden.
+	setPair(pair, hidden) {
+		this.pair = pair;
+		this.hidden = hidden;
+		const result = this.result;
+		if (!result) {
+			this.renderTable({ pairs: this.labels.map(() => ({ delay: NaN, pslr: NaN })) });
+			return;
+		}
+		if (this.corrFollow) this.centerCorrelation(result);
+		this.renderCorrelation(result);
+		this.renderTable(result);
+		if (this.waveData) this.renderWaveform(this.waveData);
+		if (this.alignDelays() !== this.waveDelays) this.fetchWave();
+	}
+
+	// The shown pair of an answer of /api/inspect.
+	shownPair(result) {
+		return result.pairs[this.pair] || result.pairs[0];
 	}
 
 	// The cursor was moved elsewhere (timeline, keys); null = back to the latest moment.
@@ -153,7 +185,7 @@ export class Inspector {
 	}
 
 	render(result) {
-		fitHeight();
+		this.fitHeight();
 		this.result = result;
 		this.cursor = result.time;
 		if (!this.waveView) {
@@ -229,15 +261,13 @@ export class Inspector {
 		this.setWaveView({ min: this.cursor - width / 2, max: this.cursor + width / 2 }, fetch);
 	}
 
-	// Center on the peaks (all pairs' delays), wide enough to show all of them; more data is fetched
-	// when the new view is outside the lags of this answer.
+	// Center on the peak of the shown pair; more data is fetched when the new view is outside the
+	// lags of this answer.
 	centerCorrelation(result) {
-		const delays = result.pairs.map((p) => p.delay).filter(Number.isFinite);
-		if (!delays.length) return;
-		const min = Math.min(...delays), max = Math.max(...delays);
-		const width = Math.max(this.corrView.max - this.corrView.min, (max - min) * 1.4 + 1);
-		const center = (min + max) / 2;
-		this.setCorrView({ min: center - width / 2, max: center + width / 2 }, false);
+		const pair = this.shownPair(result);
+		if (!pair || !Number.isFinite(pair.delay)) return;
+		const width = this.corrView.max - this.corrView.min;
+		this.setCorrView({ min: pair.delay - width / 2, max: pair.delay + width / 2 }, false);
 		const lag = result.lag;
 		if (lag.length && (this.corrView.min < lag[0] || this.corrView.max > lag[lag.length - 1])) this.onViewChange();
 	}
@@ -262,9 +292,10 @@ export class Inspector {
 		this.setWaveView({ min: this.cursor - DEFAULT_WAVE_WIDTH / 2, max: this.cursor + DEFAULT_WAVE_WIDTH / 2 });
 	}
 
-	// Fit the correlation view to the measured delays.
+	// Fit the correlation view to the measured delay.
 	fitCorrelation() {
-		const delays = this.result ? this.result.pairs.map((p) => p.delay) : [0];
+		const pair = this.result ? this.shownPair(this.result) : null;
+		const delays = pair ? [pair.delay] : [0];
 		const min = Math.min(0, ...delays), max = Math.max(0, ...delays);
 		const margin = Math.max(1, (max - min) * 0.3);
 		this.corrFollow = false;
@@ -325,8 +356,10 @@ export class Inspector {
 
 	renderCorrelation(result) {
 		const colors = chartColors();
-		const data = [result.lag, ...result.pairs.map((p) => p.corr)];
-		const key = result.pairs.length + ':' + this.labels.join();
+		const pair = this.shownPair(result);
+		const index = result.pairs.indexOf(pair);
+		const data = [result.lag, ...(pair ? [pair.corr] : [])];
+		const key = index + ':' + this.labels.join();
 		if (this.corr && this.corrKey === key) {
 			this.corr.setData(data, true);
 			return;
@@ -336,7 +369,7 @@ export class Inspector {
 		const refresh = (dragging) => this.onViewChange(dragging);
 		this.corr = new uPlot({
 			width: this.corrEl.clientWidth || 500, height: HEIGHT.value, legend: { show: false },
-			series: [{}, ...result.pairs.map((p, i) => ({ label: this.labels[i], stroke: seriesColor(i), width: 2, points: { show: false } }))],
+			series: [{}, ...(pair ? [{ label: this.labels[index], stroke: seriesColor(index), width: 2, points: { show: false } }] : [])],
 			scales: { x: { time: false, range: () => [this.corrView.min, this.corrView.max] }, y: { range: [0, 1.05] } },
 			axes: axes(colors, 'Lag (ms)', 'Correlation'),
 			cursor: { points: { show: false }, drag: { x: false, y: false }, bind: { dblclick: () => null } },
@@ -351,36 +384,36 @@ export class Inspector {
 		}, data, this.corrEl);
 	}
 
-	// Mark each pair's measured delay on the correlation chart.
+	// Mark the measured delay on the correlation chart.
 	drawPeaks(u) {
-		if (!this.result) return;
-		const ctx = u.ctx;
-		ctx.save();
-		this.result.pairs.forEach((p, i) => {
-			const x = u.valToPos(p.delay, 'x', true);
-			if (x < u.bbox.left || x > u.bbox.left + u.bbox.width) return;
-			verticalLine(u, x, seriesColor(i), true);
-		});
-		ctx.restore();
+		const pair = this.result ? this.shownPair(this.result) : null;
+		if (!pair) return;
+		const x = u.valToPos(pair.delay, 'x', true);
+		if (x < u.bbox.left || x > u.bbox.left + u.bbox.width) return;
+		u.ctx.save();
+		verticalLine(u, x, seriesColor(this.result.pairs.indexOf(pair)), true);
+		u.ctx.restore();
 	}
 
 	// --- waveforms
 
-	// Channels shown: the reference in ink, the compared ones colored like their pair.
+	// Channels of the shown pair: the reference in ink, the compared one colored like the pair.
 	shownChannels(result) {
 		const colors = chartColors();
-		const ref = result.pairs.length ? result.pairs[0].ref : 0;
-		if (result.pairs.every((p) => p.ref === p.sig)) {
-			return [{ channel: ref, label: `Ch ${ref + 1}`, color: colors.ink2, pair: 0, reference: true }];
+		const pair = this.shownPair(result);
+		const ref = pair ? pair.ref : 0;
+		const index = result.pairs.indexOf(pair);
+		if (!pair || pair.ref === pair.sig) {
+			return [{ channel: ref, label: `Ch ${ref + 1}`, color: colors.ink2, pair: index, reference: true }];
 		}
-		return [{ channel: ref, label: `Ch ${ref + 1} (reference)`, color: colors.ink2, pair: 0, reference: true },
-			...result.pairs.map((p, i) => ({ channel: p.sig, label: `Ch ${p.sig + 1}`, color: seriesColor(i), pair: i, reference: false }))];
+		return [{ channel: ref, label: `Ch ${ref + 1} (reference)`, color: colors.ink2, pair: index, reference: true },
+			{ channel: pair.sig, label: `Ch ${pair.sig + 1}`, color: seriesColor(index), pair: index, reference: false }];
 	}
 
-	// Delays of the compared channels at the cursor, "channel:ms,...", when aligning.
+	// Delay of the compared channel at the cursor, "channel:ms", when aligning.
 	alignDelays() {
-		if (!this.align || !this.result) return '';
-		return this.result.pairs.filter((p) => p.sig !== p.ref).map((p) => `${p.sig}:${p.delay}`).join(',');
+		const pair = this.align && this.result ? this.shownPair(this.result) : null;
+		return pair && pair.sig !== pair.ref ? `${pair.sig}:${pair.delay}` : '';
 	}
 
 	// Waveforms of the view plus a margin on both sides, so dragging shows data right away.
@@ -637,10 +670,12 @@ export class Inspector {
 	renderTable(result) {
 		const head = el('tr', {}, el('th', { text: 'Pair' }), el('th', { class: 'right', text: 'Delay at this moment' }),
 			el('th', { class: 'right', text: 'PSLR' }));
-		const rows = result.pairs.map((p, i) => el('tr', {},
+		// The shown pair is marked; a click on another row shows that one.
+		const rows = result.pairs.map((p, i) => (this.hidden.has(i) ? null : el('tr', {
+			class: i === this.pair ? 'selected' : '', title: i === this.pair ? 'Shown above' : 'Click to show this pair', onclick: () => this.onPair(i) },
 			el('td', {}, el('span', { class: 'row-inline' }, el('span', { class: 'key', style: `background:${seriesColor(i)}` }), this.labels[i] || '')),
 			el('td', { class: 'right', text: `${formatMs(p.delay)} ms` }),
-			el('td', { class: 'right', text: Number.isFinite(p.pslr) ? `${p.pslr.toFixed(1)} dB` : '– dB' })));
+			el('td', { class: 'right', text: Number.isFinite(p.pslr) ? `${p.pslr.toFixed(1)} dB` : '– dB' }))));
 		this.tableEl.replaceChildren(el('thead', {}, head), el('tbody', {}, rows));
 	}
 

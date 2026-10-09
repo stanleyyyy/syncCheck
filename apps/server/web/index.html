@@ -77,8 +77,6 @@
 			<button class="btn" id="emptySettings">Open settings</button>
 		</section>
 
-		<section class="pairs hidden" id="pairs" aria-label="Measured pairs"></section>
-
 		<div class="workspace hidden" id="workspace">
 			<section class="panel" id="timelinePanel">
 				<div class="panel-head">
@@ -108,7 +106,8 @@
 					<div class="spacer"></div>
 					<div class="playback hidden" id="playback">
 						<button class="btn small" id="playButton" data-state="play" title="Play from the selected moment to the end of the view (Space)"><span data-label="play">▶ Play</span><span data-label="loading">■ Loading…</span><span data-label="stop">■ Stop</span></button>
-						<select id="listen" title="What to listen to"></select>
+						<label class="toggle" for="listen">Listen</label>
+						<select id="listen" title="What to listen to: all channels, or a pair with the reference left"></select>
 					</div>
 				</div>
 				<div class="chart" id="metricChart"></div>
@@ -119,10 +118,11 @@
 
 			<section class="panel" id="inspectPanel">
 				<div class="panel-head">
-					<h2>Inspect <span class="num" id="inspectTime"></span></h2>
+					<h2>Inspect <span id="inspectPair"></span> <span class="num" id="inspectTime"></span></h2>
 					<span class="live-badge hidden" id="liveBadge">Live</span>
 					<button class="btn small hidden" id="backToLive">Back to live</button>
 				</div>
+				<section class="pairs hidden" id="pairs" aria-label="Measured pairs"></section>
 				<div class="subhead">
 					<h3>Cross-correlation</h3>
 					<span class="muted num" id="corrReadout"></span>
