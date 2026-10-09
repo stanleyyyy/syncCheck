@@ -100,7 +100,12 @@ jobs:
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
-        # The artifacts keep their build directories; publish the files in them.
+        # The artifacts keep their build directories; publish the files in them. A run for a tag
+        # that already has a release (a re-run or a re-pushed tag) replaces the release's files.
         run: |
           find packages -type f
-          gh release create "$GITHUB_REF_NAME" $(find packages -type f) --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" $(find packages -type f) --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" $(find packages -type f) --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes
+          fi
