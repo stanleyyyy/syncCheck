@@ -7,6 +7,9 @@
 #include "WavFile.h"
 #include "WebAssets.h"
 #include "httplib.h"
+#ifdef _WIN32
+#include <shellapi.h>
+#endif
 #ifdef SYNC_ANALYZER_TRAY
 #include "Tray.h"
 #endif
@@ -57,8 +60,12 @@ static bool haveDisplay()
 static void openBrowser(const std::string &url)
 {
 #if defined(_WIN32)
-	const std::string command = "start \"\" \"" + url + "\"";
-#elif defined(__APPLE__)
+	// Directly, not through "start" in a shell, whose console window would flash up.
+	if (reinterpret_cast<INT_PTR>(ShellExecuteA(nullptr, "open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL)) <= 32) {
+		DBG_WARN("Could not open a browser, open " << url << " manually");
+	}
+#else
+#if defined(__APPLE__)
 	const std::string command = "open \"" + url + "\"";
 #else
 	const std::string command = "xdg-open \"" + url + "\" >/dev/null 2>&1 &";
@@ -66,6 +73,7 @@ static void openBrowser(const std::string &url)
 	if (std::system(command.c_str()) != 0) {
 		DBG_WARN("Could not open a browser, open " << url << " manually");
 	}
+#endif
 }
 
 static const char *mimeType(const std::string &path)

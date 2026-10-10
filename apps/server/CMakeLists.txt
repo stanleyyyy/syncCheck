@@ -29,7 +29,7 @@ target_include_directories(analyzer_service PUBLIC
 target_compile_definitions(analyzer_service PUBLIC CPPHTTPLIB_THREAD_POOL_COUNT=16)
 target_link_libraries(analyzer_service PUBLIC synccheck)
 if(WIN32)
-	target_link_libraries(analyzer_service PUBLIC ws2_32)
+	target_link_libraries(analyzer_service PUBLIC ws2_32 shell32)
 	# Application icon (resource 1).
 	set(ICON_RC ${CMAKE_CURRENT_BINARY_DIR}/sync-analyzer.rc)
 	file(WRITE ${ICON_RC} "1 ICON \"${PROJECT_SOURCE_DIR}/packaging/windows/sync-analyzer.ico\"\n")
