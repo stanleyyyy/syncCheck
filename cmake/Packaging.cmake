@@ -32,11 +32,21 @@ if(WIN32)
 	set(CPACK_NSIS_PACKAGE_NAME "Sync Analyzer")
 	set(CPACK_NSIS_MODIFY_PATH ON)
 	set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
-	set(CPACK_NSIS_INSTALLED_ICON_NAME "bin\\\\sync_analyzer_server.exe")
-	# Start menu entry in launcher mode (opens the browser, quits when it is closed).
+	set(CPACK_NSIS_INSTALLED_ICON_NAME "bin\\\\sync_analyzer_tray.exe")
+	set(CPACK_NSIS_MUI_ICON "${PROJECT_SOURCE_DIR}/packaging/windows/sync-analyzer.ico")
+	set(CPACK_NSIS_MUI_UNIICON "${PROJECT_SOURCE_DIR}/packaging/windows/sync-analyzer.ico")
+	# Start menu entry: the tray app (the server behind a notification area icon), which opens the
+	# browser; its menu can start it with Windows. The installer can start it at the end.
 	set(CPACK_NSIS_CREATE_ICONS_EXTRA
-		"CreateShortCut '$SMPROGRAMS\\\\$STARTMENU_FOLDER\\\\Sync Analyzer.lnk' '$INSTDIR\\\\bin\\\\sync_analyzer_server.exe' '--app' '' 0 SW_SHOWMINIMIZED")
+		"CreateShortCut '$SMPROGRAMS\\\\$STARTMENU_FOLDER\\\\Sync Analyzer.lnk' '$INSTDIR\\\\bin\\\\sync_analyzer_tray.exe'")
 	set(CPACK_NSIS_DELETE_ICONS_EXTRA "Delete '$SMPROGRAMS\\\\$MUI_TEMP\\\\Sync Analyzer.lnk'")
+	set(CPACK_NSIS_MUI_FINISHPAGE_RUN "sync_analyzer_tray.exe")
+	# A running tray app would keep its files from being replaced or removed. Starting with Windows
+	# is turned off on uninstall, but kept when an update runs the old uninstaller (silently).
+	set(CPACK_NSIS_EXTRA_PREINSTALL_COMMANDS "nsExec::Exec 'taskkill /IM sync_analyzer_tray.exe /F'")
+	set(CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS "nsExec::Exec 'taskkill /IM sync_analyzer_tray.exe /F'
+  IfSilent +2
+  DeleteRegValue HKCU 'Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Run' 'Sync Analyzer'")
 elseif(APPLE)
 	set(CPACK_GENERATOR "TGZ")
 else()

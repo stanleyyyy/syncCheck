@@ -32,7 +32,7 @@ JACK on Linux, WASAPI/DirectSound on Windows, Core Audio on macOS.
 ## Running the web UI
 
 **As an app:** start *Sync Analyzer* from the application menu (or run
-`sync_analyzer_server --app`). It opens the UI in the browser and quits a
+`sync_analyzer_server --app`); on Windows see the tray app below. It opens the UI in the browser and quits a
 minute after the last browser tab is closed, unless a measurement is running.
 Starting it again while it runs just opens the browser.
 
@@ -48,6 +48,14 @@ It listens on port 8090 of all network interfaces: open
 `http://<computer>:8090/`. Allow the port in the firewall, e.g.
 `sudo ufw allow 8090/tcp`. Opening the app from the menu then shows the
 running service.
+
+**On Windows** the Start menu entry *Sync Analyzer* starts the tray app
+(`sync_analyzer_tray.exe`): the server runs behind an icon in the
+notification area and the UI opens in the browser. Double-click the icon to
+open the UI again; its menu has *Start with Windows* (runs it at every login,
+without opening the browser) and *Quit*. Like the Linux service it listens on
+port 8090 of all network interfaces; allow it when Windows asks about the
+firewall to reach it from other devices.
 
 **By hand:** `sync_analyzer_server [--host 0.0.0.0] [--port 8090]`. Without
 `--host` it is only reachable from the local machine.

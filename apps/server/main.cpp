@@ -7,6 +7,9 @@
 #include "WavFile.h"
 #include "WebAssets.h"
 #include "httplib.h"
+#ifdef SYNC_ANALYZER_TRAY
+#include "Tray.h"
+#endif
 #include <atomic>
 #include <csignal>
 #include <thread>
@@ -249,9 +252,15 @@ static bool extractAudio(const std::string &path, double from, double to, const 
 	return true;
 }
 
+// Built as the Windows tray app (SYNC_ANALYZER_TRAY), the server runs behind a notification area icon
+// and is reachable from the network, like the Linux service.
 int main(int argc, char *argv[])
 {
+#ifdef SYNC_ANALYZER_TRAY
+	std::string host = "0.0.0.0";
+#else
 	std::string host = "127.0.0.1";
+#endif
 	int port = 8090;
 	std::string dataDir = defaultDataDir();
 	std::string webRoot;
@@ -581,6 +590,9 @@ int main(int argc, char *argv[])
 #endif
 	if (!server.bind_to_port(host, port)) {
 		DBG_ERROR("Cannot listen on " << host << ":" << port << "; is another sync_analyzer_server running (or stopped with Ctrl+Z)?");
+#ifdef SYNC_ANALYZER_TRAY
+		showTrayError("Cannot listen on port " + std::to_string(port) + "; is another program using it?");
+#endif
 		return 1;
 	}
 
@@ -612,8 +624,17 @@ int main(int argc, char *argv[])
 		service.shutdown();
 		server.stop();
 	});
+#ifdef SYNC_ANALYZER_TRAY
+	std::thread listener([&] {
+		server.listen_after_bind();
+		g_quit = true;
+	});
+	runTray(url, g_quit);
+	listener.join();
+#else
 	server.listen_after_bind();
 	g_quit = true;
+#endif
 	quitWatcher.join();
 	return 0;
 }
