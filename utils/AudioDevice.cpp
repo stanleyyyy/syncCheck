@@ -1,4 +1,5 @@
 #include "AudioDeviceImpl.h"
+#include "Logger.h"
 #include <algorithm>
 #include <cctype>
 #include <cstring>
@@ -35,7 +36,7 @@ MiniaudioDevice::~MiniaudioDevice()
 	}
 }
 
-bool MiniaudioDevice::open(const std::string& spec, ma_device_config& config, std::string& error)
+bool MiniaudioDevice::open(const std::string& spec, ma_device_config& config, std::string& error, bool preferExclusive)
 {
 	std::string name = spec;
 	ma_backend backend = ma_backend_null;
@@ -102,6 +103,17 @@ bool MiniaudioDevice::open(const std::string& spec, ma_device_config& config, st
 		config.capture.pDeviceID = pDeviceId;
 	} else {
 		config.playback.pDeviceID = pDeviceId;
+	}
+
+	if (preferExclusive && m_context.backend == ma_backend_wasapi) {
+		ma_device_config exclusive = config;
+		(isCapture ? exclusive.capture.shareMode : exclusive.playback.shareMode) = ma_share_mode_exclusive;
+		if (ma_device_init(&m_context, &exclusive, &m_device) == MA_SUCCESS) {
+			m_deviceInitialized = true;
+			m_exclusive = true;
+			return true;
+		}
+		DBG_WARN("Cannot open '" << spec << "' in exclusive mode (another application may be using it), falling back to shared mode");
 	}
 
 	if (ma_device_init(&m_context, &config, &m_device) != MA_SUCCESS) {

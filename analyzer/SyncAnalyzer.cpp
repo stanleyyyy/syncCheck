@@ -281,6 +281,9 @@ bool SyncAnalyzer::run(const SyncAnalyzerSettings &requestedSettings, const Stat
 	}
 	if (!capture->isInitialized()) {
 		error = "failed to open capture device " + requestedSettings.m_captureDevice;
+		if (!capture->getError().empty()) {
+			error += ": " + capture->getError();
+		}
 		return false;
 	}
 

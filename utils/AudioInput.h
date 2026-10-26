@@ -22,6 +22,11 @@ public:
 	virtual unsigned int getChannels() const = 0;
 
 	/**
+	 * @brief Reason why the source failed to initialize, empty if unknown.
+	 */
+	virtual std::string getError() const { return std::string(); }
+
+	/**
 	 * @brief Make captureBlock() return an empty buffer. Safe to call from any thread.
 	 */
 	virtual void stop() { m_stopped = true; }
@@ -80,6 +85,7 @@ public:
 	std::vector<float> captureBlock() override;
 	unsigned int getSampleRate() const override { return m_sampleRate; }
 	unsigned int getChannels() const override { return m_channels; }
+	std::string getError() const override;
 
 private:
 	struct Impl;

@@ -3,6 +3,7 @@
 #include "Logger.h"
 #include <condition_variable>
 #include <mutex>
+#include <sstream>
 #include <thread>
 
 FileCapture::FileCapture(const std::string &captureDevice, unsigned int periodSize, bool realtime)
@@ -68,6 +69,7 @@ struct DeviceCapture::Impl
 	std::mutex m_mutex;
 	std::condition_variable m_dataAvailable;
 	std::atomic<unsigned int> m_overruns { 0 };
+	std::string m_error;
 
 	~Impl()
 	{
@@ -118,24 +120,43 @@ DeviceCapture::DeviceCapture(const std::string &device, unsigned int channels, u
 	config.periods = periods;
 	config.dataCallback = Impl::dataCallback;
 	config.pUserData = m_impl.get();
+	// Never mix channels together: each delivered channel must be exactly one input of the device.
+	// The default (rectangular) mode would e.g. fake channels 3 and 4 from a stereo stream.
+	config.capture.channelMixMode = ma_channel_mix_mode_simple;
 
 	// Plenty of headroom so that a slow consumer does not immediately overrun.
 	if (ma_pcm_rb_init(ma_format_f32, channels, periodSize * periods * 8, nullptr, nullptr, &m_impl->m_ringBuffer) != MA_SUCCESS) {
+		m_impl->m_error = "cannot allocate capture ring buffer";
 		DBG_ERROR("Cannot allocate capture ring buffer");
 		return;
 	}
 	m_impl->m_ringBufferInitialized = true;
 
+	// Exclusive mode bypasses the Windows mixer, which may deliver fewer channels than the device has.
 	std::string error;
-	if (!m_impl->m_device.open(device, config, error)) {
+	if (!m_impl->m_device.open(device, config, error, true)) {
+		m_impl->m_error = error;
 		DBG_ERROR("Cannot open audio device: " << device << " (" << error << ")");
 		return;
 	}
 
 	ma_device &dev = m_impl->m_device.m_device;
-	if (dev.capture.internalChannels != channels) {
+	if (dev.capture.internalChannels < channels) {
+		std::ostringstream msg;
+		msg << "device " << dev.capture.name << " delivers only " << dev.capture.internalChannels << " of " << channels
+			<< " requested channels";
+		if (dev.pContext->backend == ma_backend_wasapi && !m_impl->m_device.m_exclusive) {
+			msg << " in shared mode; close other applications using it so it can be opened exclusively";
+		}
+		m_impl->m_error = msg.str();
+		DBG_ERROR("Cannot capture: " << m_impl->m_error);
+		ma_device_uninit(&dev);
+		m_impl->m_device.m_deviceInitialized = false;
+		return;
+	}
+	if (dev.capture.internalChannels > channels) {
 		DBG_WARN("Device " << dev.capture.name << " has " << dev.capture.internalChannels << " channels, "
-			<< channels << " requested; channels are converted by the audio backend");
+			<< channels << " requested; the remaining channels are ignored");
 	}
 	if (dev.capture.internalSampleRate != sampleRate) {
 		DBG_WARN("Device " << dev.capture.name << " runs at " << dev.capture.internalSampleRate << " Hz, "
@@ -143,16 +164,24 @@ DeviceCapture::DeviceCapture(const std::string &device, unsigned int channels, u
 	}
 
 	if (ma_device_start(&dev) != MA_SUCCESS) {
+		m_impl->m_error = "cannot start audio device";
 		DBG_ERROR("Cannot start audio device: " << device);
 		ma_device_uninit(&dev);
 		m_impl->m_device.m_deviceInitialized = false;
 		return;
 	}
 
-	DBG_INFO("Capturing from " << dev.capture.name << " (" << ma_get_backend_name(dev.pContext->backend) << ")");
+	DBG_INFO("Capturing from " << dev.capture.name << " (" << ma_get_backend_name(dev.pContext->backend)
+		<< (m_impl->m_device.m_exclusive ? ", exclusive" : "") << ", " << dev.capture.internalChannels << " ch, "
+		<< dev.capture.internalSampleRate << " Hz)");
 }
 
 DeviceCapture::~DeviceCapture() = default;
+
+std::string DeviceCapture::getError() const
+{
+	return m_impl->m_error;
+}
 
 bool DeviceCapture::isInitialized() const
 {
